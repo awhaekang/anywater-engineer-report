@@ -35,6 +35,33 @@ create table if not exists public.stores (
   filter_schedule jsonb not null default '{}',
   service_order_snapshot jsonb not null default '{}',
   service_memo text,
+  product_count integer not null default 0,
+  active_product_count integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.store_products (
+  id uuid primary key default gen_random_uuid(),
+  store_id uuid not null references public.stores(id) on delete cascade,
+  external_id text not null unique,
+  source text not null default 'encom',
+  management_no text,
+  product_name text not null,
+  model_note text,
+  install_place text,
+  install_place_note text,
+  connection_note text,
+  reference_note text,
+  product_memo text,
+  product_status text,
+  management_status text,
+  installed_at text,
+  product_type text,
+  faucet_type text,
+  filters jsonb not null default '[]',
+  sort_order integer not null default 0,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -143,7 +170,10 @@ create table if not exists public.visit_report_photos (
 create index if not exists stores_location_idx on public.stores (lat, lng);
 create index if not exists stores_management_no_idx on public.stores (management_no);
 create index if not exists stores_status_idx on public.stores (customer_status);
-create unique index if not exists stores_external_id_idx on public.stores (external_id) where external_id is not null;
+create unique index if not exists stores_external_id_idx on public.stores (external_id);
+create index if not exists store_products_store_idx on public.store_products (store_id, sort_order);
+create index if not exists store_products_management_no_idx on public.store_products (management_no);
+create index if not exists store_products_active_idx on public.store_products (active);
 create index if not exists service_orders_visit_date_idx on public.service_orders (visit_date, status);
 create index if not exists visit_reports_store_date_idx on public.visit_reports (store_id, visit_date desc);
 create index if not exists visit_reports_status_idx on public.visit_reports (status);
@@ -151,6 +181,7 @@ create index if not exists visit_reports_engineer_idx on public.visit_reports (e
 
 alter table public.profiles enable row level security;
 alter table public.stores enable row level security;
+alter table public.store_products enable row level security;
 alter table public.visit_types enable row level security;
 alter table public.service_orders enable row level security;
 alter table public.visit_type_checks enable row level security;
@@ -177,6 +208,27 @@ create policy "stores_select_authenticated"
 
 create policy "stores_write_manager"
   on public.stores for all
+  to authenticated
+  using (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.role in ('manager', 'admin')
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.role in ('manager', 'admin')
+    )
+  );
+
+create policy "store_products_select_authenticated"
+  on public.store_products for select
+  to authenticated
+  using (true);
+
+create policy "store_products_write_manager"
+  on public.store_products for all
   to authenticated
   using (
     exists (

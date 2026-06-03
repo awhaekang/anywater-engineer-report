@@ -404,13 +404,51 @@ function statusClass(store) {
   return store.customerStatus || "active";
 }
 
+function formatProductItem(product) {
+  if (typeof product === "string") return product;
+  const filters = (product.filters || [])
+    .slice(0, 2)
+    .map((filter) => {
+      const parts = [
+        filter.name,
+        filter.cycle ? `주기 ${filter.cycle}` : "",
+        filter.nextDate ? `예정 ${filter.nextDate}` : "",
+      ];
+      return parts.filter(Boolean).join(" / ");
+    })
+    .filter(Boolean)
+    .join(", ");
+  const notes = [product.modelNote, product.connectionNote, product.referenceNote, product.productMemo]
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" / ");
+  const parts = [
+    product.productName || "제품 확인 필요",
+    product.installPlace || product.installPlaceNote || "",
+    filters,
+    notes ? `비고 ${notes}` : "",
+  ];
+  return parts.filter(Boolean).join(" / ");
+}
+
+function storeProductList(store) {
+  if (!store) return [];
+  if (store.productItems?.length) return store.productItems.map(formatProductItem);
+  return [ ...(store.products || []), ...(store.products?.length ? [] : store.equipment || []) ];
+}
+
+function productCountLabel(store) {
+  const count = store.activeProductCount || store.productCount || store.productItems?.length || store.equipment?.length || 0;
+  return `${count}개 제품/필터`;
+}
+
 function storeDetailBlocks(store) {
   const filters = store.filterSchedule || {};
   const order = store.serviceOrder || {};
   const contract = store.contract || {};
   const product = store.product || {};
   const route = store.route || {};
-  const products = store.products || [];
+  const products = storeProductList(store);
   return `
     <div class="detail-grid">
       <article class="detail-card">
@@ -431,10 +469,11 @@ function storeDetailBlocks(store) {
       <article class="detail-card">
         <h3>제품/관리</h3>
         <p>제품명: ${product.productName || "-"}</p>
-        <p>모델명: ${product.modelName || "-"}</p>
+        <p>모델/비고: ${product.modelName || "-"}</p>
         <p>설치장소: ${product.installPlace || "-"}</p>
         <p>제품상태: ${product.productStatus || "-"}</p>
         <p>관리여부: ${product.managementStatus || "-"}</p>
+        <p>제품 수: ${productCountLabel(store)}</p>
       </article>
       <article class="detail-card">
         <h3>지역/주기</h3>
@@ -814,7 +853,7 @@ function renderStoreCards(target, stores, options = {}) {
       <div class="store-meta">
         <span>${formatDistance(meters)}</span>
         <span>담당 ${store.manager}</span>
-        <span>${store.equipment.length}개 장비/필터</span>
+        <span>${productCountLabel(store)}</span>
         ${store.source === "encom" ? `<span>엔콤</span>` : ""}
         ${store.needsGeocode ? `<span>좌표 필요</span>` : ""}
         <span class="status-pill ${statusClass(store)}">${customerStatusLabels[statusClass(store)]}</span>
@@ -973,7 +1012,7 @@ function renderReportForm() {
   $("#selectedStoreBadge").textContent = store ? "작성 가능" : "대기";
   $("#selectedStoreBadge").classList.toggle("muted", !store);
 
-  const products = store ? [ ...(store.products || []), ...(store.products?.length ? [] : store.equipment || []) ] : [];
+  const products = storeProductList(store);
   $("#productChecklist").innerHTML = products.length
     ? products
         .map(
