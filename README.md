@@ -61,8 +61,10 @@ Supabase 연동 후에는 Vercel 환경 변수에 다음 값을 둡니다.
 
 ```text
 SUPABASE_URL=
-SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY`는 서버 함수(`api/customers.js`)에서만 사용하고 브라우저 코드에는 노출하지 않습니다.
 
 ## 다음 개발 순서
 
