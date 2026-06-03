@@ -1,0 +1,10 @@
+data/customers.local.json
+data/import-summary.json
+data/geocode-*.local.json
+data/geocode-*.local.csv
+__pycache__/
+*.pyc
+.env
+.env.local
+.env.supabase.local
+.DS_Store

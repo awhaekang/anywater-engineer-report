@@ -1,0 +1,12 @@
+.DS_Store
+node_modules/
+__pycache__/
+*.pyc
+.vercel/
+.env
+.env.local
+.env.supabase.local
+data/customers.local.json
+data/import-summary.json
+data/geocode-*.local.json
+data/geocode-*.local.csv

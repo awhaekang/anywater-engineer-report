@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>현장 방문 보고</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <section id="loginScreen" class="login-screen">
+      <div class="login-card">
+        <div class="brand login-brand">
+          <span class="brand-mark">AW</span>
+          <div>
+            <strong>애니워터</strong>
+            <small>정수필터 현장관리</small>
+          </div>
+        </div>
+        <div>
+          <p class="eyebrow">Team Login</p>
+          <h1>부서와 이름으로 로그인</h1>
+          <p class="login-copy">부서를 먼저 선택하면 해당 부서 직원 이름만 표시됩니다.</p>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            부서
+            <select id="loginDepartment" required>
+              <option value="tech">기술부</option>
+              <option value="cs">CS팀</option>
+              <option value="management">경영지원부</option>
+              <option value="rnd">연구개발팀</option>
+              <option value="customer">고객관리팀</option>
+            </select>
+          </label>
+          <label>
+            이름
+            <select id="loginName" required></select>
+          </label>
+          <button class="primary-btn full" type="submit">로그인하고 업무 화면 열기</button>
+        </form>
+      </div>
+    </section>
+
+    <div id="appShell" class="app-shell" hidden>
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">AW</span>
+          <div>
+            <strong>애니워터</strong>
+            <small>정수필터 현장관리</small>
+          </div>
+        </div>
+
+        <div class="role-switcher">
+          <label for="roleSelect">현재 부서</label>
+          <select id="roleSelect">
+            <option value="tech">기술부</option>
+            <option value="cs">CS팀</option>
+            <option value="management">경영지원부</option>
+            <option value="rnd">연구개발팀</option>
+            <option value="customer">고객관리팀</option>
+          </select>
+          <small id="sessionUser" class="session-user">로그인 사용자</small>
+          <button id="logoutButton" class="ghost-btn sidebar-logout" type="button">로그아웃</button>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" data-view="field" data-departments="tech customer">현장 보고</button>
+          <button class="nav-item" data-view="monthly" data-departments="tech">이번달 진행 상황</button>
+          <button class="nav-item" data-view="admin" data-departments="tech" data-users="양석원">관리자</button>
+          <button class="nav-item" data-view="settings" data-departments="tech customer">점검 양식</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <section id="departmentPending" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Department Workspace</p>
+              <h1>부서 화면 준비 중</h1>
+            </div>
+          </header>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="pendingDepartmentTitle">선택한 부서</h2>
+                <p>현재 현장관리 화면은 기술부와 고객관리팀에만 연결되어 있습니다.</p>
+              </div>
+              <span class="status-pill muted">준비 중</span>
+            </div>
+            <p class="pending-copy">해당 부서 전용 업무 화면은 다음 단계에서 연결합니다.</p>
+          </section>
+        </section>
+
+        <section id="field" class="view active">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Anywater Field</p>
+              <h1>정수필터 현장 보고</h1>
+            </div>
+            <div class="location-actions">
+              <button id="refreshLocation" class="primary-btn">현재 위치 확인</button>
+              <span id="currentLocationText" class="location-chip muted">현재 위치 대기</span>
+            </div>
+          </header>
+
+          <section class="panel visit-panel">
+            <div class="panel-head">
+              <div>
+                <h2>오늘 방문 오더</h2>
+                <p>사무실 배정 업무와 정기점검/정기교체 대상을 함께 확인합니다</p>
+              </div>
+            </div>
+            <div id="todayOrders" class="order-list"></div>
+          </section>
+
+          <div class="grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>근처 설치처</h2>
+                  <p id="locationStatus">위치 확인을 기다리는 중</p>
+                </div>
+                <div class="stacked-actions">
+                  <input id="storeSearch" class="search" type="search" placeholder="설치처명, 주소 검색" />
+                  <button id="toggleQuickAdd" class="ghost-btn" type="button">설치처 직접 추가</button>
+                </div>
+              </div>
+              <form id="quickStoreForm" class="quick-store-form" hidden>
+                <label>
+                  설치처명
+                  <input id="quickStoreName" required placeholder="예: 새로 발견한 음식점" />
+                </label>
+                <label>
+                  주소
+                  <input id="quickStoreAddress" required placeholder="현재 주소 또는 대략적인 위치" />
+                </label>
+                <label>
+                  연락처
+                  <input id="quickStorePhone" placeholder="연락처를 알면 입력" />
+                </label>
+                <label>
+                  메모
+                  <input id="quickStoreMemo" placeholder="데이터 누락, 상호 변경 등" />
+                </label>
+                <button class="primary-btn full" type="submit">임시 설치처 추가</button>
+              </form>
+              <div id="nearbyStores" class="store-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>방문 전 이력 확인</h2>
+                  <p id="fieldHistorySubtitle">설치처를 선택하면 최근 이력을 먼저 보여줍니다</p>
+                </div>
+                <span id="fieldHistoryBadge" class="status-pill muted">대기</span>
+              </div>
+              <div id="fieldHistoryDetail" class="history-detail compact"></div>
+            </section>
+          </div>
+
+          <section id="reportComposer" class="panel report-composer" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>이력 남기기</h2>
+                <p id="selectedStoreName">설치처를 선택하세요</p>
+              </div>
+              <span id="selectedStoreBadge" class="status-pill muted">대기</span>
+            </div>
+
+            <form id="reportForm" class="report-form">
+              <label>
+                방문 유형
+                <select id="visitTypeSelect" required></select>
+              </label>
+
+              <div class="split">
+                <label>
+                  도착 시간
+                  <input id="arrivalTime" type="time" required />
+                </label>
+                <label>
+                  종료 시간
+                  <input id="finishTime" type="time" required />
+                </label>
+              </div>
+
+              <section class="form-block">
+                <h3>처리 제품</h3>
+                <div id="productChecklist"></div>
+              </section>
+
+              <section class="form-block">
+                <h3>체크리스트</h3>
+                <div id="checklist"></div>
+              </section>
+
+              <section class="form-block">
+                <h3>사진 단계</h3>
+                <div id="photoSteps"></div>
+              </section>
+
+              <label>
+                문제 원인 / 점검 메모
+                <textarea id="issueCause" rows="3" placeholder="수압, 누수, 필터 상태, 고객 요청사항 등을 입력"></textarea>
+              </label>
+
+              <label>
+                조치 내용
+                <textarea id="actionTaken" rows="4" placeholder="필터 교체, 누수 조치, 수질 확인 등 처리 내용을 입력" required></textarea>
+              </label>
+
+              <section class="form-block">
+                <h3>다음 방문 재확인</h3>
+                <label class="check-row">
+                  <span>다음 방문 때 다시 확인할 항목으로 남기기</span>
+                  <input id="createFollowUp" type="checkbox" />
+                </label>
+                <label>
+                  재확인 내용
+                  <textarea id="followUpText" rows="3" placeholder="예: 주방 하부 누수 흔적 재확인, 수압 낮음 재점검"></textarea>
+                </label>
+                <label>
+                  우선순위
+                  <select id="followUpPriority">
+                    <option value="보통">보통</option>
+                    <option value="높음">높음</option>
+                    <option value="긴급">긴급</option>
+                  </select>
+                </label>
+              </section>
+
+              <div class="split">
+                <label>
+                  다음 방문 필요
+                  <select id="needRevisit">
+                    <option value="아니오">아니오</option>
+                    <option value="예">예</option>
+                  </select>
+                </label>
+                <label>
+                  고객 확인
+                  <select id="customerConfirm">
+                    <option value="확인 완료">확인 완료</option>
+                    <option value="부재">부재</option>
+                    <option value="미확인">미확인</option>
+                  </select>
+                </label>
+              </div>
+
+              <button class="primary-btn full" type="submit">보고서 제출</button>
+            </form>
+          </section>
+        </section>
+
+        <section id="monthly" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Monthly Progress</p>
+              <h1>이번달 진행 상황</h1>
+            </div>
+          </header>
+
+          <section class="panel">
+            <div class="monthly-tabs" role="tablist" aria-label="이번달 진행 상황 보기">
+              <button class="monthly-tab active" type="button" data-monthly-view="summary">요약</button>
+              <button class="monthly-tab" type="button" data-monthly-view="list">전체 리스트</button>
+              <button class="monthly-tab" type="button" data-monthly-view="map">지도</button>
+            </div>
+
+            <div class="monthly-progress-views">
+              <article class="monthly-progress-view active" data-monthly-panel="summary">
+                <h2>이번달 해야하는 계정 요약</h2>
+                <div id="monthlySummaryContent"></div>
+              </article>
+              <article class="monthly-progress-view" data-monthly-panel="list">
+                <div class="panel-head monthly-list-head">
+                  <div>
+                    <h2>이번달 전체 계정 리스트</h2>
+                    <p id="monthlyListSubtitle">담당자, 주소 권역, 설치처명 순으로 정렬합니다</p>
+                  </div>
+                  <label class="inline-check monthly-filter">
+                    <input id="monthlyIncompleteOnly" type="checkbox" />
+                    미완료만 보기
+                  </label>
+                </div>
+                <div id="monthlyListContent"></div>
+              </article>
+              <article class="monthly-progress-view" data-monthly-panel="map">
+                <h2>이번달 계정 지도</h2>
+                <div id="monthlyMapContent" class="monthly-placeholder map-placeholder">지도 표시 영역</div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section id="stores" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Customer History</p>
+              <h1>설치처별 누적 이력</h1>
+            </div>
+            <input id="historySearch" class="search wide" type="search" placeholder="설치처 검색" />
+          </header>
+          <div class="grid history-layout">
+            <section class="panel">
+              <div id="historyStoreList" class="store-list"></div>
+            </section>
+            <section class="panel">
+              <div id="storeHistoryDetail" class="history-detail"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="admin" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Dashboard</p>
+              <h1>관리자 대시보드</h1>
+            </div>
+            <div class="actions">
+              <button id="exportReports" class="primary-btn">CSV 내보내기</button>
+              <button id="resetDemo" class="ghost-btn">샘플 초기화</button>
+            </div>
+          </header>
+
+          <div id="stats" class="stats-grid"></div>
+          <div class="grid two">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>검토 대기 보고</h2>
+                  <p>제출된 보고서를 확인하고 승인 상태로 전환합니다</p>
+                </div>
+              </div>
+              <div id="reviewList" class="review-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>개선 포인트</h2>
+                  <p>회의에서 바로 볼 수 있는 반복 이슈입니다</p>
+                </div>
+              </div>
+              <div id="insights" class="insight-list"></div>
+            </section>
+          </div>
+          <section class="panel admin-store-panel">
+            <div class="panel-head">
+              <div>
+                <h2>오더 생성</h2>
+                <p>신규설치, 철거, A/S는 사무실에서 생성하고 엔지니어에게 배정합니다</p>
+              </div>
+            </div>
+            <form id="orderForm" class="store-form">
+              <label>
+                설치처
+                <select id="orderStoreSelect" required></select>
+              </label>
+              <label>
+                업무 유형
+                <select id="orderType" required>
+                  <option value="install">신규설치</option>
+                  <option value="remove">철거</option>
+                  <option value="repair">A/S</option>
+                  <option value="inspection">정기점검</option>
+                  <option value="filter-replace">정기교체</option>
+                </select>
+              </label>
+              <label>
+                방문예정일
+                <input id="orderVisitDate" type="date" required />
+              </label>
+              <label>
+                배정 엔지니어
+                <input id="orderEngineer" placeholder="예: 홍길동" />
+              </label>
+              <label>
+                긴급도
+                <select id="orderPriority">
+                  <option value="보통">보통</option>
+                  <option value="높음">높음</option>
+                  <option value="긴급">긴급</option>
+                </select>
+              </label>
+              <label class="wide-field">
+                접수 내용
+                <input id="orderRequest" required placeholder="고객 요청, 장애 증상, 설치/철거 메모" />
+              </label>
+              <button class="primary-btn" type="submit">오더 추가</button>
+            </form>
+            <div id="serviceOrderList" class="order-list"></div>
+          </section>
+          <section class="panel admin-store-panel">
+            <div class="panel-head">
+              <div>
+                <h2>설치처 등록</h2>
+                <p>위치 추천과 이력 누적의 기준이 되는 고객사 정보를 관리합니다</p>
+              </div>
+            </div>
+            <form id="storeForm" class="store-form">
+              <label>
+                관리번호
+                <input id="newStoreManagementNo" placeholder="엔콤 관리번호" />
+              </label>
+              <label>
+                설치처명
+                <input id="newStoreName" required placeholder="예: ○○카페 강남점" />
+              </label>
+              <label>
+                고객명/계약자
+                <input id="newStoreOwnerName" placeholder="예: 홍길동 / 법인명" />
+              </label>
+              <label>
+                주소
+                <input id="newStoreAddress" required placeholder="예: 서울 강남구 ..." />
+              </label>
+              <label>
+                주소 메모
+                <input id="newStoreAddressMemo" placeholder="비밀번호, 위치 설명 등" />
+              </label>
+              <label>
+                담당자
+                <input id="newStoreManager" required placeholder="예: 김담당" />
+              </label>
+              <label>
+                연락처
+                <input id="newStorePhone" required placeholder="예: 02-000-0000" />
+              </label>
+              <label>
+                휴대폰
+                <input id="newStoreMobile" placeholder="예: 010-0000-0000" />
+              </label>
+              <label>
+                오픈시간
+                <input id="newStoreOpenTime" placeholder="예: 10시, 14시 이후" />
+              </label>
+              <label>
+                고객 유형
+                <select id="newStoreCustomerType">
+                  <option value="음식점">음식점</option>
+                  <option value="카페">카페</option>
+                  <option value="공장">공장</option>
+                  <option value="기타">기타</option>
+                </select>
+              </label>
+              <label>
+                담당 지역
+                <input id="newStoreServiceRegion" placeholder="예: 강남, 위례, 성수" />
+              </label>
+              <label>
+                정기 방문월
+                <select id="newStoreRouteMonth">
+                  <option value="">미지정</option>
+                  <option value="1">1월</option>
+                  <option value="2">2월</option>
+                  <option value="3">3월</option>
+                  <option value="4">4월</option>
+                  <option value="5">5월</option>
+                  <option value="6">6월</option>
+                  <option value="7">7월</option>
+                  <option value="8">8월</option>
+                  <option value="9">9월</option>
+                  <option value="10">10월</option>
+                  <option value="11">11월</option>
+                  <option value="12">12월</option>
+                </select>
+              </label>
+              <label>
+                점검 주기
+                <select id="newStoreInspectionCycle">
+                  <option value="6">6개월</option>
+                  <option value="12">12개월</option>
+                  <option value="0">없음/별도</option>
+                </select>
+              </label>
+              <label>
+                교체 주기
+                <select id="newStoreReplacementCycle">
+                  <option value="6">6개월</option>
+                  <option value="12">12개월</option>
+                  <option value="0">없음/별도</option>
+                </select>
+              </label>
+              <label>
+                신규 카페 정책
+                <select id="newStoreCafePolicy">
+                  <option value="">해당 없음</option>
+                  <option value="legacy-6m">기존 카페 6개월 교체</option>
+                  <option value="new-12m">신규 카페 1년 교체</option>
+                </select>
+              </label>
+              <label>
+                고객 상태
+                <select id="newStoreCustomerStatus">
+                  <option value="active">관리중</option>
+                  <option value="caution">확인 필요</option>
+                  <option value="terminated">해지/회수</option>
+                  <option value="temporary">임시 등록</option>
+                </select>
+              </label>
+              <label>
+                계약일자
+                <input id="newStoreContractDate" type="date" />
+              </label>
+              <label>
+                CMS 상태
+                <input id="newStoreCmsStatus" placeholder="예: 승인완료, 해지완료" />
+              </label>
+              <label>
+                제품명
+                <input id="newStoreProductName" placeholder="제품명" />
+              </label>
+              <label>
+                모델명
+                <input id="newStoreModelName" placeholder="모델명" />
+              </label>
+              <label>
+                설치장소
+                <input id="newStoreInstallPlace" placeholder="예: 주방, 바, 공장 라인" />
+              </label>
+              <label>
+                제품상태
+                <select id="newStoreProductStatus">
+                  <option value="설치완료">설치완료</option>
+                  <option value="설치예정">설치예정</option>
+                  <option value="계약해지">계약해지</option>
+                  <option value="설치보류">설치보류</option>
+                  <option value="설치취소">설치취소</option>
+                </select>
+              </label>
+              <label>
+                관리여부
+                <select id="newStoreManagementStatus">
+                  <option value="관리함">관리함</option>
+                  <option value="관리안함">관리안함</option>
+                </select>
+              </label>
+              <label>
+                설치완료일
+                <input id="newStoreInstalledAt" type="date" />
+              </label>
+              <label>
+                방문예정일
+                <input id="newStoreVisitScheduledAt" type="date" />
+              </label>
+              <label>
+                A/S 접수일
+                <input id="newStoreAsReceivedAt" type="date" />
+              </label>
+              <label>
+                진행상태
+                <input id="newStoreProgressStatus" placeholder="예: 접수, 보류, 취소" />
+              </label>
+              <label>
+                계약해지일
+                <input id="newStoreContractEndedAt" type="date" />
+              </label>
+              <label>
+                제품회수일
+                <input id="newStoreRecoveredAt" type="date" />
+              </label>
+              <label>
+                위도
+                <input id="newStoreLat" type="number" step="0.000001" required placeholder="예: 37.5008" />
+              </label>
+              <label>
+                경도
+                <input id="newStoreLng" type="number" step="0.000001" required placeholder="예: 127.0364" />
+              </label>
+              <label class="wide-field">
+                렌탈 장비/필터
+                <input id="newStoreEquipment" required placeholder="쉼표로 구분: AW-RO-500, 전처리필터, 카본필터" />
+              </label>
+              <label class="wide-field">
+                제품별 관리 목록
+                <textarea id="newStoreProductList" rows="4" placeholder="한 줄에 하나씩 입력: 제품명 / 모델명 / 설치장소 / 필터"></textarea>
+              </label>
+              <label>
+                최근 필터 교체일
+                <input id="newStoreLastFilterDate" type="date" />
+              </label>
+              <label>
+                다음 점검 예정일
+                <input id="newStoreNextInspectionDate" type="date" />
+              </label>
+              <label>
+                다음 정기교체 예정일
+                <input id="newStoreNextReplacementDate" type="date" />
+              </label>
+              <label>
+                잔여일
+                <input id="newStoreRemainingDays" type="number" placeholder="예: 30" />
+              </label>
+              <label class="wide-field">
+                접수/처리 메모
+                <input id="newStoreServiceMemo" placeholder="접수내용, 처리내용, 제품메모장 등" />
+              </label>
+              <button class="primary-btn" type="submit">설치처 추가</button>
+            </form>
+            <div id="adminStoreList" class="admin-store-list"></div>
+          </section>
+        </section>
+
+        <section id="settings" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Templates</p>
+              <h1>방문 유형별 점검 양식</h1>
+            </div>
+            <button id="addVisitType" class="primary-btn">방문 유형 추가</button>
+          </header>
+          <div id="templateList" class="template-grid"></div>
+        </section>
+      </main>
+    </div>
+
+    <template id="visitTypeDialog">
+      <dialog class="modal">
+        <form method="dialog" id="templateForm">
+          <h2>방문 유형 추가</h2>
+          <label>
+            유형 이름
+            <input id="newTypeName" required placeholder="예: 사전 실사" />
+          </label>
+          <label>
+            체크리스트
+            <textarea id="newTypeChecks" rows="5" placeholder="한 줄에 하나씩 입력" required></textarea>
+          </label>
+          <label>
+            사진 단계
+            <textarea id="newTypePhotos" rows="5" placeholder="한 줄에 하나씩 입력" required></textarea>
+          </label>
+          <div class="modal-actions">
+            <button class="ghost-btn" value="cancel" type="button" id="cancelTemplate">취소</button>
+            <button class="primary-btn" value="default" type="submit">저장</button>
+          </div>
+        </form>
+      </dialog>
+    </template>
+
+    <script src="./app.js?v=deployment-data-1"></script>
+  </body>
+</html>
