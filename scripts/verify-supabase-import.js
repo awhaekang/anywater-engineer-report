@@ -105,6 +105,7 @@ async function main() {
 
   const byStatus = {};
   const juneByEngineerCode = {};
+  const juneActiveByEngineerCode = {};
   const byProduct = {};
 
   for (const store of stores) {
@@ -113,6 +114,9 @@ async function main() {
     if (serviceRegion.startsWith("6")) {
       const code = (serviceRegion.match(/[ABC]/i) || ["미지정"])[0].toUpperCase();
       increment(juneByEngineerCode, code);
+      if (store.customer_status === "active") {
+        increment(juneActiveByEngineerCode, code);
+      }
     }
   }
 
@@ -133,6 +137,7 @@ async function main() {
         activeProducts: products.filter((product) => product.active).length,
         byStatus,
         juneByEngineerCode,
+        juneActiveByEngineerCode,
         multiProductStores: stores.filter((store) => Number(store.product_count || 0) > 1).length,
         activeMultiProductStores: stores.filter((store) => Number(store.active_product_count || 0) > 1).length,
         productRowsWithInstallPlace: products.filter((product) => product.install_place).length,
