@@ -67,7 +67,7 @@ const monthlyEngineerOrder = ["A", "B", "C", "UNASSIGNED"];
 const koreanNameCollator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
 const TMAP_DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 };
 const TMAP_DEFAULT_ZOOM = 11;
-const TMAP_MARKER_MIN_ZOOM = 13;
+const TMAP_MARKER_MIN_ZOOM = 11;
 const SUPABASE_CONFIG_ENDPOINT = "/api/supabase-config";
 const SUPABASE_TABLES = {
   customers: "customers",
