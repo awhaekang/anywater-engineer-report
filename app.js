@@ -64,6 +64,22 @@ const monthlyEngineerKeysByName = Object.fromEntries(
 );
 
 const monthlyEngineerOrder = ["A", "B", "C", "UNASSIGNED"];
+const koreanNameCollator = new Intl.Collator("ko-KR", { numeric: true, sensitivity: "base" });
+const TMAP_DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 };
+const TMAP_DEFAULT_ZOOM = 11;
+const TMAP_MARKER_MIN_ZOOM = 13;
+const SUPABASE_CONFIG_ENDPOINT = "/api/supabase-config";
+const SUPABASE_TABLES = {
+  customers: "customers",
+  products: "products",
+  serviceOrders: "service_orders",
+  visitReports: "visit_reports",
+};
+const MAP_MARKER_COLORS = {
+  pending: "#2563eb",
+  complete: "#16a34a",
+  hold: "#f59e0b",
+};
 
 const localSpecialOrderTypes = {
   install: "신규설치",
@@ -238,6 +254,23 @@ let currentDepartment = normalizeDepartmentId(
 let isReportComposerOpen = false;
 let currentSession = loadSession();
 let activeOrderId = null;
+let tmapState = {
+  map: null,
+  clusterer: null,
+  markers: [],
+  infoWindow: null,
+  renderToken: 0,
+};
+let supabaseClient = null;
+let supabaseState = {
+  enabled: false,
+  loaded: false,
+  loading: false,
+  error: "",
+  monthlyItems: null,
+  reports: null,
+  serviceOrders: null,
+};
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -267,7 +300,7 @@ function loadState() {
 function saveState() {
   const persistable = {
     ...state,
-    stores: state.stores.filter((store) => store.source !== "encom"),
+    stores: state.stores.filter((store) => !["encom", "supabase"].includes(store.source)),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
 }
@@ -318,11 +351,653 @@ function getVisitType(id) {
 }
 
 function getStore(id) {
-  return state.stores.find((store) => store.id === id);
+  return state.stores.find((store) => sameDbId(store.id, id));
 }
 
 function isLocalAppHost() {
   return ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
+}
+
+function pickField(record, names, fallback = "") {
+  if (!record) return fallback;
+  for (const name of names) {
+    const value = record[name];
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return fallback;
+}
+
+function normalizeDbId(value) {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function sameDbId(left, right) {
+  return normalizeDbId(left) === normalizeDbId(right);
+}
+
+function normalizeDbNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeDbArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === "") return [];
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Plain text values are treated as a single checklist/product entry.
+    }
+    return [value];
+  }
+  return [value];
+}
+
+function normalizeNeedRevisit(value) {
+  if (value === true) return "예";
+  if (value === false) return "아니오";
+  return value || "아니오";
+}
+
+function needRevisitToDb(value) {
+  return value === true || String(value || "").trim() === "예";
+}
+
+function isLocalGeneratedId(value) {
+  return /^(order|report|periodic|temp-store)-/.test(String(value || ""));
+}
+
+function upsertById(list, item) {
+  return [item, ...(list || []).filter((entry) => !sameDbId(entry.id, item.id))];
+}
+
+function currentReports() {
+  return supabaseState.reports || state.reports || [];
+}
+
+function currentServiceOrders() {
+  return supabaseState.serviceOrders || state.serviceOrders || [];
+}
+
+async function initializeSupabaseClient() {
+  try {
+    const response = await fetch(SUPABASE_CONFIG_ENDPOINT, { cache: "no-store" });
+    if (!response.ok) return;
+    const config = await response.json();
+    if (!config.supabaseUrl || !config.supabaseAnonKey || !window.supabase?.createClient) {
+      supabaseState.enabled = false;
+      supabaseState.error = "Supabase config is incomplete";
+      return;
+    }
+    supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey);
+    supabaseState.enabled = true;
+    supabaseState.error = "";
+  } catch (error) {
+    supabaseState.enabled = false;
+    supabaseState.error = error.message || "Failed to initialize Supabase";
+    console.warn("Supabase 초기화 실패, localStorage fallback 사용:", error);
+  }
+}
+
+function normalizeSupabaseStore(row) {
+  const customer = row?.customers || row?.customer || row?.customer_data || row || {};
+  const product = row || {};
+  const customerId = pickField(customer, ["id", "customer_id", "store_id", "고객_id", "고객ID"], "");
+  const fallbackId = pickField(product, ["customer_id", "store_id", "고객_id", "customerId", "id"], "");
+  const id = normalizeDbId(customerId || fallbackId);
+  const name = pickField(customer, ["name", "customer_name", "고객명", "상호", "설치처명"], pickField(product, ["고객명", "상호", "설치처명"], ""));
+  const address = pickField(customer, ["address", "주소", "road_address", "도로명주소"], pickField(product, ["주소", "address"], ""));
+  const manager = pickField(product, ["정기_담당_엔지니어", "assigned_engineer", "engineer"], pickField(customer, ["manager", "담당자"], ""));
+  const visitMonth = pickField(product, ["방문_월1", "visit_month_1", "visitMonth1"], "");
+  const managementNo = pickField(customer, ["management_no", "관리번호", "customer_code"], pickField(product, ["management_no", "관리번호"], ""));
+  const productName = pickField(product, ["product_name", "제품명", "상품명", "name"], "");
+  const lat = normalizeDbNumber(pickField(customer, ["lat", "latitude", "위도"], pickField(product, ["lat", "latitude", "위도"], null)));
+  const lng = normalizeDbNumber(pickField(customer, ["lng", "longitude", "경도"], pickField(product, ["lng", "longitude", "경도"], null)));
+
+  return {
+    id,
+    customerId: id,
+    managementNo,
+    name: name || "고객명 없음",
+    ownerName: pickField(customer, ["owner_name", "계약자", "대표자", "성명", "법인명"], ""),
+    address,
+    addressMemo: pickField(customer, ["address_memo", "주소메모"], ""),
+    manager,
+    phone: pickField(customer, ["phone", "전화", "연락처", "연락처_유선"], ""),
+    mobile: pickField(customer, ["mobile", "휴대폰", "핸드폰", "휴대폰_주"], ""),
+    openTime: pickField(customer, ["open_time", "오픈시간"], ""),
+    customerType: pickField(customer, ["customer_type", "고객유형", "업종", "업태"], ""),
+    lat,
+    lng,
+    equipment: productName ? [productName] : [],
+    products: productName ? [productName] : [],
+    productItems: [product].filter(Boolean),
+    customerStatus: "active",
+    source: "supabase",
+    route: {
+      serviceRegion: manager,
+      routeMonth: visitMonth,
+    },
+    contact: customer.contact || {},
+    product,
+    serviceOrder: {},
+    serviceMemo: pickField(customer, ["service_memo", "메모"], ""),
+  };
+}
+
+function normalizeSupabaseReport(row) {
+  return {
+    id: normalizeDbId(pickField(row, ["id"], `report-${Date.now()}`)),
+    storeId: normalizeDbId(pickField(row, ["customer_id", "store_id", "고객_id"], "")),
+    orderId: normalizeDbId(pickField(row, ["service_order_id", "order_id"], "")),
+    engineer: pickField(row, ["engineer", "engineer_name", "created_by", "작성자"], "현장 엔지니어"),
+    visitTypeId: pickField(row, ["visit_type_id", "visit_type", "방문유형"], "inspection"),
+    date: pickField(row, ["visit_date", "date", "방문일"], today()),
+    arrivalTime: pickField(row, ["arrival_time", "arrivalTime", "도착시간"], ""),
+    finishTime: pickField(row, ["finish_time", "finishTime", "종료시간"], ""),
+    checks: normalizeDbArray(pickField(row, ["checks", "checklist", "체크리스트"], [])),
+    processedProducts: normalizeDbArray(pickField(row, ["processed_products", "processedProducts", "처리제품"], [])),
+    photos: normalizeDbArray(pickField(row, ["photos", "사진"], [])),
+    issueCause: pickField(row, ["issue_cause", "issueCause", "문제원인"], ""),
+    actionTaken: pickField(row, ["action_taken", "actionTaken", "조치내용"], ""),
+    needRevisit: normalizeNeedRevisit(pickField(row, ["need_revisit", "needRevisit", "재방문"], "아니오")),
+    customerConfirm: pickField(row, ["customer_confirm", "customerConfirm", "고객확인"], "확인 완료"),
+    status: pickField(row, ["status", "상태"], "검토 대기"),
+    position: {
+      lat: normalizeDbNumber(pickField(row, ["latitude", "lat", "위도"], null)),
+      lng: normalizeDbNumber(pickField(row, ["longitude", "lng", "경도"], null)),
+    },
+    followUpText: pickField(row, ["follow_up_text", "followUpText", "재확인내용"], ""),
+  };
+}
+
+function normalizeSupabaseOrder(row) {
+  return {
+    id: normalizeDbId(pickField(row, ["id"], `order-${Date.now()}`)),
+    storeId: normalizeDbId(pickField(row, ["customer_id", "store_id", "고객_id"], "")),
+    type: pickField(row, ["type", "order_type", "업무유형"], "inspection"),
+    visitDate: pickField(row, ["visit_date", "visitDate", "방문예정일"], today()),
+    assignedEngineer: pickField(row, ["assigned_engineer", "assigned_engineer_name", "정기_담당_엔지니어", "배정엔지니어"], ""),
+    priority: pickField(row, ["priority", "긴급도"], "보통"),
+    request: pickField(row, ["request", "요청내용", "접수내용"], ""),
+    status: pickField(row, ["status", "상태"], "scheduled"),
+    source: pickField(row, ["source", "출처"], "office"),
+    createdAt: pickField(row, ["created_at", "createdAt"], ""),
+    createdBy: pickField(row, ["created_by", "createdBy"], ""),
+    completedAt: pickField(row, ["completed_at", "completedAt"], ""),
+    completedReportId: normalizeDbId(pickField(row, ["completed_report_id", "completedReportId"], "")),
+  };
+}
+
+function reportMatchesMonth(report, monthKey) {
+  return String(report.date || "").startsWith(monthKey);
+}
+
+function reportsForStoreFromList(storeId, monthKey, reports) {
+  return reports
+    .filter((report) => sameDbId(report.storeId, storeId) && reportMatchesMonth(report, monthKey))
+    .sort((a, b) => `${b.date} ${b.finishTime || b.arrivalTime || ""}`.localeCompare(`${a.date} ${a.finishTime || a.arrivalTime || ""}`));
+}
+
+function orderMatchesMonth(order, monthKey) {
+  return String(order.visitDate || "").startsWith(monthKey);
+}
+
+function serviceOrdersForStoreFromList(storeId, monthKey, orders) {
+  return orders
+    .filter((order) => sameDbId(order.storeId, storeId))
+    .filter((order) => !monthKey || orderMatchesMonth(order, monthKey));
+}
+
+function monthDateRange(monthInfo) {
+  const start = `${monthInfo.year}-${String(monthInfo.month).padStart(2, "0")}-01`;
+  const next = new Date(monthInfo.year, monthInfo.month, 1);
+  const end = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`;
+  return { start, end };
+}
+
+async function firstSuccessfulSupabaseRead(label, attempts) {
+  let lastError = null;
+  for (const attempt of attempts) {
+    const { data, error } = await attempt();
+    if (!error) return data || [];
+    lastError = error;
+    console.warn(`${label} 조회 시도 실패:`, error);
+  }
+  throw lastError || new Error(`${label} 조회 실패`);
+}
+
+async function firstSuccessfulSupabaseMutation(label, attempts) {
+  let lastError = null;
+  for (const attempt of attempts) {
+    const { data, error } = await attempt();
+    if (!error) return data;
+    lastError = error;
+    console.warn(`${label} 저장 시도 실패:`, error);
+  }
+  throw lastError || new Error(`${label} 저장 실패`);
+}
+
+function mergeSupabaseStore(existing, incoming) {
+  const productItems = [...(existing.productItems || []), ...(incoming.productItems || [])].filter(Boolean);
+  const products = [...new Set([...(existing.products || []), ...(incoming.products || [])].filter(Boolean))];
+  const equipment = [...new Set([...(existing.equipment || []), ...(incoming.equipment || [])].filter(Boolean))];
+  return {
+    ...existing,
+    ...Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== "" && value !== null && value !== undefined)),
+    products,
+    equipment,
+    productItems,
+  };
+}
+
+function isUsableStore(store) {
+  return Boolean(store?.id && store.name && store.name !== "고객명 없음");
+}
+
+function mergeSupabaseStores(stores) {
+  stores.filter(isUsableStore).forEach((store) => {
+    const index = state.stores.findIndex((item) => sameDbId(item.id, store.id));
+    if (index >= 0) {
+      state.stores[index] = mergeSupabaseStore(state.stores[index], store);
+    } else {
+      state.stores.push(store);
+    }
+  });
+}
+
+function supabaseRowsToStores(rows) {
+  return (rows || []).map(normalizeSupabaseStore).filter(isUsableStore);
+}
+
+function sortMonthlyItems(items) {
+  return [...items].sort((a, b) => {
+    const nameDiff = compareKoreanText(storeNameSortKey(a.store), storeNameSortKey(b.store));
+    if (nameDiff) return nameDiff;
+    const areaDiff = compareKoreanText(a.area, b.area);
+    if (areaDiff) return areaDiff;
+    const engineerDiff = engineerSortIndex(a.engineer.key) - engineerSortIndex(b.engineer.key);
+    if (engineerDiff) return engineerDiff;
+    return compareKoreanText(a.store.managementNo, b.store.managementNo);
+  });
+}
+
+function buildSupabaseMonthlyItems(productRows, reports, orders, monthInfo) {
+  const storesById = new Map();
+  productRows.forEach((row) => {
+    const store = normalizeSupabaseStore(row);
+    if (!isUsableStore(store)) return;
+    const existing = storesById.get(store.id);
+    storesById.set(store.id, existing ? mergeSupabaseStore(existing, store) : store);
+  });
+
+  return sortMonthlyItems(
+    [...storesById.values()].map((store) => {
+      const storeReports = reportsForStoreFromList(store.id, monthInfo.key, reports);
+      const storeOrders = serviceOrdersForStoreFromList(store.id, monthInfo.key, orders);
+      const scopeKey = monthlyEngineerKeysByName[currentSession?.name || ""];
+      const engineer = scopeKey
+        ? { key: scopeKey, teamCode: scopeKey, name: currentSession.name }
+        : monthlyEngineer(store);
+      return {
+        store,
+        reports: storeReports,
+        serviceOrders: storeOrders,
+        completed: storeReports.length > 0,
+        engineer,
+        area: addressArea(store),
+        specialOrders: storeOrders
+          .filter((order) => !isHiddenSpecialOrderStatus(order.status))
+          .map((order) => ({
+            type: localSpecialOrderTypes[order.type] || orderTypeLabels[order.type] || order.type,
+            status: statusLabel(order.status),
+            source: "Supabase",
+          })),
+      };
+    })
+  );
+}
+
+async function fetchSupabaseMonthlyProductRows(monthInfo) {
+  const month = monthInfo.month;
+  const engineerName = currentSession?.name || "";
+
+  // 서버사이드 API 우선 (RLS 우회, service role key 사용)
+  try {
+    const params = new URLSearchParams({ month: String(month) });
+    if (engineerName) params.set("engineer", engineerName);
+    const response = await fetch(`/api/monthly-route?${params}`, { cache: "no-store" });
+    if (response.ok) {
+      const data = await response.json();
+      return data.rows || [];
+    }
+    console.warn("monthly-route API 응답 실패:", response.status);
+  } catch (err) {
+    console.warn("monthly-route API 호출 실패, Supabase 직접 조회 시도:", err);
+  }
+
+  // Fallback: Supabase 클라이언트 직접 조회
+  if (!supabaseClient) return [];
+
+  let query = supabaseClient
+    .from("products")
+    .select("*")
+    .or(`방문_월1.eq.${month},방문_월2.eq.${month}`);
+
+  if (engineerName) {
+    query = query.eq("정기_담당_엔지니어", engineerName);
+  }
+
+  const { data: productRows, error: productError } = await query;
+  if (productError) {
+    console.error("products 조회 실패:", productError);
+    return [];
+  }
+
+  const customerIds = [...new Set((productRows || []).map((product) => product.customer_id).filter(Boolean))];
+  if (customerIds.length === 0) return [];
+
+  const { data: customerRows, error: customerError } = await supabaseClient
+    .from("customers")
+    .select("*")
+    .in("id", customerIds);
+
+  if (customerError) {
+    console.error("customers 조회 실패:", customerError);
+    return [];
+  }
+
+  const customerMap = Object.fromEntries((customerRows || []).map((customer) => [customer.id, customer]));
+  return productRows.map((product) => ({
+    ...product,
+    customers: customerMap[product.customer_id] || null,
+  }));
+}
+
+async function fetchSupabaseReportRows(monthInfo) {
+  const { start, end } = monthDateRange(monthInfo);
+  return firstSuccessfulSupabaseRead("방문 보고서", [
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.visitReports)
+        .select("*, customers(*)")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.visitReports)
+        .select("*, customer:customers(*)")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.visitReports)
+        .select("*")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () => supabaseClient.from(SUPABASE_TABLES.visitReports).select("*").gte("date", start).lt("date", end),
+    () => supabaseClient.from(SUPABASE_TABLES.visitReports).select("*"),
+  ]);
+}
+
+async function fetchSupabaseServiceOrderRows(monthInfo) {
+  const { start, end } = monthDateRange(monthInfo);
+  return firstSuccessfulSupabaseRead("서비스 오더", [
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.serviceOrders)
+        .select("*, customers(*)")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.serviceOrders)
+        .select("*, customer:customers(*)")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () =>
+      supabaseClient
+        .from(SUPABASE_TABLES.serviceOrders)
+        .select("*")
+        .gte("visit_date", start)
+        .lt("visit_date", end)
+        .order("visit_date", { ascending: false }),
+    () => supabaseClient.from(SUPABASE_TABLES.serviceOrders).select("*").gte("date", start).lt("date", end),
+    () => supabaseClient.from(SUPABASE_TABLES.serviceOrders).select("*"),
+  ]);
+}
+
+async function refreshSupabaseData({ force = false } = {}) {
+  if (!supabaseClient || !supabaseState.enabled || !currentSession) return false;
+  if (supabaseState.loading) return false;
+  if (supabaseState.loaded && !force) return true;
+
+  supabaseState.loading = true;
+  try {
+    const monthInfo = currentMonthInfo();
+    const [productRows, reportRows, orderRows] = await Promise.all([
+      fetchSupabaseMonthlyProductRows(monthInfo),
+      fetchSupabaseReportRows(monthInfo),
+      fetchSupabaseServiceOrderRows(monthInfo),
+    ]);
+    const reports = reportRows.map(normalizeSupabaseReport).filter((report) => reportMatchesMonth(report, monthInfo.key));
+    const serviceOrders = orderRows.map(normalizeSupabaseOrder).filter((order) => !order.visitDate || orderMatchesMonth(order, monthInfo.key));
+    const stores = [
+      ...supabaseRowsToStores(productRows),
+      ...supabaseRowsToStores(reportRows),
+      ...supabaseRowsToStores(orderRows),
+    ];
+
+    mergeSupabaseStores(stores);
+    supabaseState.reports = reports;
+    supabaseState.serviceOrders = serviceOrders;
+    supabaseState.monthlyItems = buildSupabaseMonthlyItems(productRows, reports, serviceOrders, monthInfo);
+    supabaseState.loaded = true;
+    supabaseState.error = "";
+    if (!selectedStoreId && supabaseState.monthlyItems[0]) selectedStoreId = supabaseState.monthlyItems[0].store.id;
+    return true;
+  } catch (error) {
+    supabaseState.error = error.message || "Supabase data load failed";
+    supabaseState.monthlyItems = null;
+    supabaseState.reports = null;
+    supabaseState.serviceOrders = null;
+    console.warn("Supabase 조회 실패, localStorage fallback 사용:", error);
+    return false;
+  } finally {
+    supabaseState.loading = false;
+  }
+}
+
+function serviceOrderPayloads(order) {
+  const base = {
+    visit_date: order.visitDate,
+    priority: order.priority,
+    request: order.request,
+    status: order.status,
+    source: order.source,
+  };
+  return [
+    {
+      ...base,
+      customer_id: order.storeId,
+      type: order.type,
+      assigned_engineer: order.assignedEngineer,
+      created_by: order.createdBy,
+    },
+    {
+      ...base,
+      customer_id: order.storeId,
+      type: order.type,
+      assigned_engineer: order.assignedEngineer,
+    },
+    {
+      ...base,
+      store_id: order.storeId,
+      order_type: order.type,
+      assigned_engineer_name: order.assignedEngineer,
+    },
+  ];
+}
+
+async function createServiceOrder(order) {
+  if (!supabaseClient || !supabaseState.enabled) {
+    state.serviceOrders.unshift(order);
+    saveState();
+    return order;
+  }
+
+  try {
+    const row = await firstSuccessfulSupabaseMutation(
+      "서비스 오더",
+      serviceOrderPayloads(order).map((payload) => () =>
+        supabaseClient.from(SUPABASE_TABLES.serviceOrders).insert(payload).select().single()
+      )
+    );
+    const saved = normalizeSupabaseOrder(row || order);
+    supabaseState.serviceOrders = upsertById(supabaseState.serviceOrders || [], saved);
+    return saved;
+  } catch (error) {
+    console.warn("서비스 오더 Supabase 저장 실패, localStorage fallback 사용:", error);
+    state.serviceOrders.unshift(order);
+    saveState();
+    return order;
+  }
+}
+
+function visitReportPayloads(report) {
+  const position = report.position || {};
+  const base = {
+    visit_date: report.date,
+    arrival_time: report.arrivalTime,
+    finish_time: report.finishTime,
+    issue_cause: report.issueCause,
+    action_taken: report.actionTaken,
+    customer_confirm: report.customerConfirm,
+    status: report.status,
+    latitude: normalizeDbNumber(position.lat),
+    longitude: normalizeDbNumber(position.lng),
+    processed_products: report.processedProducts || [],
+    follow_up_text: report.followUpText || "",
+  };
+  const serviceOrderId = report.orderId && !isLocalGeneratedId(report.orderId) ? report.orderId : null;
+  return [
+    {
+      ...base,
+      customer_id: report.storeId,
+      service_order_id: serviceOrderId,
+      engineer: report.engineer,
+      visit_type: report.visitTypeId,
+      checks: report.checks,
+      photos: report.photos,
+      need_revisit: report.needRevisit,
+    },
+    {
+      ...base,
+      customer_id: report.storeId,
+      engineer: report.engineer,
+      visit_type: report.visitTypeId,
+      need_revisit: report.needRevisit,
+    },
+    {
+      ...base,
+      store_id: report.storeId,
+      service_order_id: serviceOrderId,
+      visit_type_id: report.visitTypeId,
+      need_revisit: needRevisitToDb(report.needRevisit),
+    },
+  ].map((payload) => Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== null && value !== undefined)));
+}
+
+async function createVisitReport(report) {
+  if (!supabaseClient || !supabaseState.enabled) {
+    state.reports.unshift(report);
+    saveState();
+    return report;
+  }
+
+  try {
+    const row = await firstSuccessfulSupabaseMutation(
+      "방문 보고서",
+      visitReportPayloads(report).map((payload) => () =>
+        supabaseClient.from(SUPABASE_TABLES.visitReports).insert(payload).select().single()
+      )
+    );
+    const saved = normalizeSupabaseReport(row || report);
+    supabaseState.reports = upsertById(supabaseState.reports || [], saved);
+    return saved;
+  } catch (error) {
+    console.warn("방문 보고서 Supabase 저장 실패, localStorage fallback 사용:", error);
+    state.reports.unshift(report);
+    saveState();
+    return report;
+  }
+}
+
+async function updateServiceOrderStatus(order, status, reportId = "") {
+  const localUpdate = () => {
+    const localOrder = state.serviceOrders.find((item) => sameDbId(item.id, order.id));
+    if (localOrder) {
+      localOrder.status = status;
+      localOrder.completedAt = new Date().toISOString();
+      localOrder.completedReportId = reportId;
+      saveState();
+    }
+    return localOrder || { ...order, status, completedAt: new Date().toISOString(), completedReportId: reportId };
+  };
+
+  if (!supabaseClient || !supabaseState.enabled) return localUpdate();
+
+  try {
+    const completedAt = new Date().toISOString();
+    const updateWithReport = {
+      status,
+      completed_at: completedAt,
+      ...(reportId && !isLocalGeneratedId(reportId) ? { completed_report_id: reportId } : {}),
+    };
+    const row = await firstSuccessfulSupabaseMutation("서비스 오더 상태", [
+      () => supabaseClient.from(SUPABASE_TABLES.serviceOrders).update(updateWithReport).eq("id", order.id).select().single(),
+      () => supabaseClient.from(SUPABASE_TABLES.serviceOrders).update({ status }).eq("id", order.id).select().single(),
+    ]);
+    const updated = normalizeSupabaseOrder(row || { ...order, status, completedAt, completedReportId: reportId });
+    supabaseState.serviceOrders = upsertById(supabaseState.serviceOrders || [], updated);
+    return updated;
+  } catch (error) {
+    console.warn("서비스 오더 상태 Supabase 변경 실패, localStorage fallback 사용:", error);
+    return localUpdate();
+  }
+}
+
+async function updateVisitReportStatus(report, status) {
+  const localUpdate = () => {
+    const localReport = state.reports.find((item) => sameDbId(item.id, report.id));
+    if (localReport) {
+      localReport.status = status;
+      saveState();
+    }
+    return localReport || { ...report, status };
+  };
+
+  if (!supabaseClient || !supabaseState.enabled) return localUpdate();
+
+  try {
+    const row = await firstSuccessfulSupabaseMutation("방문 보고서 상태", [
+      () => supabaseClient.from(SUPABASE_TABLES.visitReports).update({ status }).eq("id", report.id).select().single(),
+      () => supabaseClient.from(SUPABASE_TABLES.visitReports).update({ 상태: status }).eq("id", report.id).select().single(),
+    ]);
+    const updated = normalizeSupabaseReport(row || { ...report, status });
+    supabaseState.reports = upsertById(supabaseState.reports || [], updated);
+    return updated;
+  } catch (error) {
+    console.warn("방문 보고서 상태 Supabase 변경 실패, localStorage fallback 사용:", error);
+    return localUpdate();
+  }
 }
 
 async function hydrateExternalCustomers() {
@@ -575,6 +1250,254 @@ function formatPercent(value) {
   return `${Math.round(value)}%`;
 }
 
+function waitForTmapSdkReady() {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const maxAttempts = 160;
+    const readiness = () => ({
+      hasTmapv2: Boolean(window.Tmapv2),
+      hasMap: typeof window.Tmapv2?.Map === "function",
+      hasLatLng: typeof window.Tmapv2?.LatLng === "function",
+      hasMarker: typeof window.Tmapv2?.Marker === "function",
+      hasInfoWindow: typeof window.Tmapv2?.InfoWindow === "function",
+      hasMarkerClusterer: hasTmapMarkerClusterer(),
+      scripts: [...document.scripts]
+        .map((script) => script.src)
+        .filter((src) => src.includes("tmap"))
+        .map((src) => src.replace(/appKey=[^&]+/, "appKey=***")),
+    });
+    const check = () => {
+      const state = readiness();
+      if (state.hasMap && state.hasLatLng && state.hasMarker && state.hasInfoWindow) {
+        resolve(window.Tmapv2);
+        return;
+      }
+      attempts += 1;
+      if (attempts > maxAttempts) {
+        reject(new Error(`Tmap SDK did not initialize: ${JSON.stringify(state)}`));
+        return;
+      }
+      window.setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+function hasTmapMarkerClusterer() {
+  return typeof window.Tmapv2?.extension?.MarkerClusterer === "function";
+}
+
+function hasStoreCoordinates(store) {
+  return Number.isFinite(Number(store?.lat)) && Number.isFinite(Number(store?.lng));
+}
+
+function mapMarkerItemsFromMonthlyItems(items) {
+  const seen = new Set();
+  return items
+    .filter((item) => hasStoreCoordinates(item.store))
+    .filter((item) => {
+      const store = item.store;
+      const key = store.id || `${store.name}-${store.lat}-${store.lng}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function monthlyMarkerStatus(item) {
+  const hasHoldOrder = [...(item.serviceOrders || []), ...(item.specialOrders || [])].some((order) =>
+    ["hold", "보류"].includes(String(order.status || "").trim())
+  );
+  if (hasHoldOrder) return "hold";
+  return item.completed ? "complete" : "pending";
+}
+
+function markerStatusLabel(status) {
+  return {
+    complete: "완료",
+    pending: "미완료",
+    hold: "보류",
+  }[status] || "미완료";
+}
+
+function markerIconForStatus(status) {
+  const fill = MAP_MARKER_COLORS[status] || MAP_MARKER_COLORS.pending;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">
+      <path d="M16 39s13-13.6 13-24A13 13 0 1 0 3 15c0 10.4 13 24 13 24Z" fill="${fill}"/>
+      <circle cx="16" cy="15" r="5.5" fill="#fff"/>
+    </svg>
+  `;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function clearTmapMarkers() {
+  if (tmapState.clusterer) {
+    if (typeof tmapState.clusterer.clearMarkers === "function") {
+      tmapState.clusterer.clearMarkers();
+    } else if (typeof tmapState.clusterer.removeMarkers === "function") {
+      tmapState.clusterer.removeMarkers(tmapState.markers);
+    } else if (typeof tmapState.clusterer.setMap === "function") {
+      tmapState.clusterer.setMap(null);
+    }
+    tmapState.clusterer = null;
+  }
+  tmapState.markers.forEach((marker) => {
+    if (typeof marker.setMap === "function") marker.setMap(null);
+  });
+  tmapState.markers = [];
+}
+
+function closeTmapInfoWindow() {
+  if (!tmapState.infoWindow) return;
+  if (typeof tmapState.infoWindow.setMap === "function") {
+    tmapState.infoWindow.setMap(null);
+  } else if (typeof tmapState.infoWindow.close === "function") {
+    tmapState.infoWindow.close();
+  }
+  tmapState.infoWindow = null;
+}
+
+function tmapRouteUrl(store) {
+  const goalName = encodeURIComponent(store.name || "설치처");
+  const goaly = encodeURIComponent(Number(store.lat));
+  const goalx = encodeURIComponent(Number(store.lng));
+  return `tmap://route?goalname=${goalName}&goaly=${goaly}&goalx=${goalx}`;
+}
+
+function tmapPopupHtml(item) {
+  const store = item.store || item;
+  const status = item.store ? markerStatusLabel(monthlyMarkerStatus(item)) : "";
+  return `
+    <div class="tmap-popup">
+      <strong>${escapeHtml(store.name || "설치처")}</strong>
+      ${status ? `<small>${escapeHtml(status)}</small>` : ""}
+      <p>${escapeHtml(store.address || "주소 정보 없음")}</p>
+      <a class="tmap-route-button" href="${escapeHtml(tmapRouteUrl(store))}" role="button">길안내</a>
+    </div>
+  `;
+}
+
+function addTmapListener(target, eventName, handler) {
+  if (typeof target.addListener === "function") {
+    target.addListener(eventName, handler);
+    return;
+  }
+  if (window.Tmapv2?.Event?.addListener) {
+    window.Tmapv2.Event.addListener(target, eventName, handler);
+  }
+}
+
+function showTmapStorePopup(item, position) {
+  closeTmapInfoWindow();
+  if (typeof tmapState.map?.setCenter === "function") tmapState.map.setCenter(position);
+  tmapState.infoWindow = new window.Tmapv2.InfoWindow({
+    position,
+    content: tmapPopupHtml(item),
+    type: 2,
+    map: tmapState.map,
+  });
+}
+
+function createTmapStoreMarker(item) {
+  const store = item.store || item;
+  const status = item.store ? monthlyMarkerStatus(item) : "pending";
+  const position = new window.Tmapv2.LatLng(Number(store.lat), Number(store.lng));
+  const marker = new window.Tmapv2.Marker({
+    position,
+    map: null,
+    title: store.name || "",
+    icon: markerIconForStatus(status),
+  });
+  addTmapListener(marker, "click", () => showTmapStorePopup(item, position));
+  return marker;
+}
+
+function addTmapClusteredMarkers(markerItems) {
+  if (!hasTmapMarkerClusterer()) {
+    throw new Error("Tmap MarkerClusterer is not available");
+  }
+  tmapState.clusterer = new window.Tmapv2.extension.MarkerClusterer({
+    map: tmapState.map,
+    gridSize: 60,
+    minimumClusterSize: 2,
+  });
+  tmapState.markers = markerItems.map(createTmapStoreMarker);
+  tmapState.clusterer.addMarkers(tmapState.markers);
+}
+
+function currentTmapZoom() {
+  const map = tmapState.map;
+  const zoom =
+    typeof map?.getZoom === "function"
+      ? map.getZoom()
+      : typeof map?.getZoomLevel === "function"
+        ? map.getZoomLevel()
+        : map?.zoom;
+  const numericZoom = Number(zoom);
+  return Number.isFinite(numericZoom) ? numericZoom : TMAP_DEFAULT_ZOOM;
+}
+
+function setTmapMarkerVisibility(visible) {
+  tmapState.markers.forEach((marker) => {
+    if (typeof marker.setMap === "function") marker.setMap(visible ? tmapState.map : null);
+  });
+  if (!visible) closeTmapInfoWindow();
+}
+
+function addTmapZoomControlledMarkers(markerItems, status, summaryText) {
+  tmapState.markers = markerItems.map(createTmapStoreMarker);
+  const updateVisibility = () => {
+    const zoom = currentTmapZoom();
+    const visible = zoom >= TMAP_MARKER_MIN_ZOOM;
+    setTmapMarkerVisibility(visible);
+    status.textContent = visible
+      ? `${summaryText} 줌 ${zoom}에서 마커를 표시 중입니다.`
+      : `${summaryText} 줌 ${TMAP_MARKER_MIN_ZOOM} 이상으로 확대하면 마커가 표시됩니다.`;
+  };
+
+  updateVisibility();
+  ["zoom_changed", "zoomend"].forEach((eventName) => addTmapListener(tmapState.map, eventName, updateVisibility));
+}
+
+async function initializeMonthlyMap(items, monthInfo) {
+  const container = $("#monthlyTmap");
+  const status = $("#monthlyMapStatus");
+  if (!container || !status) return;
+
+  const token = ++tmapState.renderToken;
+  const markerItems = mapMarkerItemsFromMonthlyItems(items);
+  status.textContent = "Tmap 지도를 준비하는 중입니다.";
+
+  try {
+    await waitForTmapSdkReady();
+    if (token !== tmapState.renderToken || !container.isConnected) return;
+
+    clearTmapMarkers();
+    closeTmapInfoWindow();
+    tmapState.map = new window.Tmapv2.Map(container, {
+      center: new window.Tmapv2.LatLng(TMAP_DEFAULT_CENTER.lat, TMAP_DEFAULT_CENTER.lng),
+      width: "100%",
+      height: "100%",
+      zoom: TMAP_DEFAULT_ZOOM,
+    });
+
+    const summaryText = markerItems.length
+      ? `${monthInfo.label} 대상 ${items.length.toLocaleString()}건 중 좌표 있는 고객 ${markerItems.length.toLocaleString()}건.`
+      : `${monthInfo.label} 대상 ${items.length.toLocaleString()}건 중 좌표가 있는 고객이 없습니다.`;
+    if (hasTmapMarkerClusterer()) {
+      addTmapClusteredMarkers(markerItems);
+      status.textContent = `${summaryText} 클러스터링으로 표시 중입니다.`;
+    } else {
+      console.warn("Tmap MarkerClusterer가 없어 줌 레벨 기반 마커 표시로 대체합니다.");
+      addTmapZoomControlledMarkers(markerItems, status, summaryText);
+    }
+  } catch (error) {
+    console.error("Tmap 초기화 에러:", error);
+    status.textContent = "Tmap 지도를 불러오지 못했습니다. 로컬 서버와 TMAP_APP_KEY를 확인하세요.";
+  }
+}
+
 function currentMonthInfo(date = new Date()) {
   const year = date.getFullYear();
   const month = date.getMonth() + 1;
@@ -624,6 +1547,17 @@ function engineerSortIndex(key) {
   return index === -1 ? monthlyEngineerOrder.length : index;
 }
 
+function compareKoreanText(a, b) {
+  return koreanNameCollator.compare(String(a || ""), String(b || ""));
+}
+
+function storeNameSortKey(store) {
+  return String(store.name || "")
+    .trim()
+    .replace(/^(?:\(주\)|㈜|주식회사)\s*/i, "")
+    .trim();
+}
+
 function addressArea(store) {
   const parts = String(store.address || "").trim().split(/\s+/).filter(Boolean);
   return parts.slice(0, 2).join(" ") || "-";
@@ -633,6 +1567,8 @@ function statusLabel(status) {
   const normalized = String(status || "").trim();
   return {
     scheduled: "예정",
+    in_progress: "진행 중",
+    hold: "보류",
     done: "완료",
     canceled: "취소",
     cancelled: "취소",
@@ -658,9 +1594,7 @@ function reportDateInMonth(report, monthKey) {
 }
 
 function submittedReportsForStoreInMonth(storeId, monthKey) {
-  return state.reports
-    .filter((report) => report.storeId === storeId && reportDateInMonth(report, monthKey))
-    .sort((a, b) => `${b.date} ${b.finishTime || b.arrivalTime || ""}`.localeCompare(`${a.date} ${a.finishTime || a.arrivalTime || ""}`));
+  return reportsForStoreFromList(storeId, monthKey, currentReports()).filter((report) => reportDateInMonth(report, monthKey));
 }
 
 function specialOrdersForStore(store, monthKey) {
@@ -675,7 +1609,7 @@ function specialOrdersForStore(store, monthKey) {
     });
   }
 
-  (state.serviceOrders || [])
+  currentServiceOrders()
     .filter((order) => order.storeId === store.id)
     .forEach((order) => {
       const type = localSpecialOrderTypes[order.type];
@@ -694,29 +1628,30 @@ function specialOrdersForStore(store, monthKey) {
 
 function monthlyProgressItems(date = new Date(), scope = currentMonthlyScope()) {
   const monthInfo = currentMonthInfo(date);
-  return state.stores
+  if (supabaseState.monthlyItems) {
+    return sortMonthlyItems(
+      supabaseState.monthlyItems.filter((item) => !scope?.key || item.engineer.key === scope.key)
+    );
+  }
+
+  return sortMonthlyItems(state.stores
     .filter((store) => statusClass(store) === "active")
     .filter((store) => routeCycleMonth(store) === monthInfo.routeMonth)
     .map((store) => {
       const reports = submittedReportsForStoreInMonth(store.id, monthInfo.key);
+      const serviceOrders = serviceOrdersForStoreFromList(store.id, monthInfo.key, currentServiceOrders());
       const engineer = monthlyEngineer(store);
       return {
         store,
         reports,
+        serviceOrders,
         completed: reports.length > 0,
         engineer,
         area: addressArea(store),
         specialOrders: specialOrdersForStore(store, monthInfo.key),
       };
     })
-    .filter((item) => !scope?.key || item.engineer.key === scope.key)
-    .sort((a, b) => {
-      const engineerDiff = engineerSortIndex(a.engineer.key) - engineerSortIndex(b.engineer.key);
-      if (engineerDiff) return engineerDiff;
-      const areaDiff = a.area.localeCompare(b.area, "ko-KR");
-      if (areaDiff) return areaDiff;
-      return String(a.store.name || "").localeCompare(String(b.store.name || ""), "ko-KR");
-    });
+    .filter((item) => !scope?.key || item.engineer.key === scope.key));
 }
 
 function setDefaultTimes() {
@@ -760,6 +1695,7 @@ function bindMonthlyProgressTabs() {
       $$(".monthly-progress-view").forEach((panel) => {
         panel.classList.toggle("active", panel.dataset.monthlyPanel === target);
       });
+      if (target === "map") renderMonthlyProgress();
     });
   });
 }
@@ -880,7 +1816,7 @@ function renderStoreCards(target, stores, options = {}) {
 }
 
 function openServiceOrders() {
-  return (state.serviceOrders || []).filter((order) => order.status !== "done");
+  return currentServiceOrders().filter((order) => !["done", "cancelled", "canceled"].includes(String(order.status || "").trim()));
 }
 
 function periodicDueOrders() {
@@ -1059,8 +1995,8 @@ function renderReportForm() {
 }
 
 function storeReports(storeId) {
-  return state.reports
-    .filter((report) => report.storeId === storeId)
+  return currentReports()
+    .filter((report) => sameDbId(report.storeId, storeId))
     .sort((a, b) => `${b.date} ${b.arrivalTime}`.localeCompare(`${a.date} ${a.arrivalTime}`));
 }
 
@@ -1440,19 +2376,11 @@ function monthlyListHtml(items, totalCount, incompleteOnly) {
 }
 
 function monthlyMapHtml(items, monthInfo) {
-  const geocoded = items.filter((item) => typeof item.store.lat === "number" && typeof item.store.lng === "number");
-  if (!geocoded.length) {
-    return `
-      <div>
-        <strong>${monthInfo.label} 지도 준비 중</strong>
-        <p>이번달 대상 ${items.length.toLocaleString()}건 중 좌표가 있는 설치처가 없습니다. 주소 좌표 변환 후 지도에 표시할 수 있습니다.</p>
-      </div>
-    `;
-  }
+  const geocoded = mapMarkerItemsFromMonthlyItems(items);
   return `
-    <div>
-      <strong>좌표 있는 설치처 ${geocoded.length.toLocaleString()}건</strong>
-      <p>지도 시각화는 좌표 검수 완료 후 연결합니다.</p>
+    <div id="monthlyTmap" class="tmap-map" aria-label="${escapeHtml(monthInfo.label)} 고객 위치 지도"></div>
+    <div id="monthlyMapStatus" class="monthly-map-status">
+      이번달 대상 ${items.length.toLocaleString()}건 중 좌표 있는 고객 ${geocoded.length.toLocaleString()}건
     </div>
   `;
 }
@@ -1471,14 +2399,19 @@ function renderMonthlyProgress() {
   const scopeText = scope ? `${scope.name} 담당 ${monthInfo.routeMonth}1000${scope.key} 계열` : `${monthInfo.routeMonth}으로 시작하는 담당자(지역)`;
 
   summaryContainer.innerHTML = monthlySummaryHtml(items, monthInfo, scope);
-  $("#monthlyListSubtitle").textContent = `${monthInfo.label} · ${scopeText} · 주소 권역, 설치처명 순`;
+  $("#monthlyListSubtitle").textContent = `${monthInfo.label} · ${scopeText} · 설치처명 순`;
   listContainer.innerHTML = monthlyListHtml(visibleItems, items.length, incompleteOnly);
   mapContainer.innerHTML = monthlyMapHtml(items, monthInfo);
+  mapContainer.classList.add("has-map");
+  if (mapContainer.closest(".monthly-progress-view")?.classList.contains("active")) {
+    initializeMonthlyMap(items, monthInfo);
+  }
 }
 
 function renderStats() {
-  const todayReports = state.reports.filter((report) => report.date === today()).length;
-  const pending = state.reports.filter((report) => report.status === "검토 대기").length;
+  const reports = currentReports();
+  const todayReports = reports.filter((report) => report.date === today()).length;
+  const pending = reports.filter((report) => report.status === "검토 대기").length;
   const openOrders = openServiceOrders().length;
   const periodicDue = periodicDueOrders().length;
   const encomStores = state.stores.filter((store) => store.source === "encom" && statusClass(store) === "active");
@@ -1503,14 +2436,14 @@ function renderOrderFormOptions() {
 }
 
 function renderServiceOrderList() {
-  const orders = [...(state.serviceOrders || [])].sort((a, b) => `${b.visitDate}`.localeCompare(`${a.visitDate}`));
+  const orders = [...currentServiceOrders()].sort((a, b) => `${b.visitDate}`.localeCompare(`${a.visitDate}`));
   $("#serviceOrderList").innerHTML = orders.length
     ? orders.map((order) => orderCardHtml(order, false)).join("")
     : `<div class="empty">등록된 오더가 없습니다.</div>`;
 }
 
 function renderReviewList() {
-  const reports = state.reports
+  const reports = currentReports()
     .filter((report) => report.status === "검토 대기")
     .sort((a, b) => `${b.date} ${b.arrivalTime}`.localeCompare(`${a.date} ${a.arrivalTime}`));
 
@@ -1527,7 +2460,7 @@ function renderReviewList() {
         <article class="report-card">
           <div class="panel-head">
             <div>
-              <h3>${store.name}</h3>
+              <h3>${store?.name || "설치처 확인 필요"}</h3>
               <p>${type.name} · ${report.engineer} · ${report.date}</p>
             </div>
             <button class="primary-btn approve" data-id="${report.id}">승인</button>
@@ -1548,17 +2481,19 @@ function renderReviewList() {
     .join("");
 
   $$(".approve").forEach((button) => {
-    button.addEventListener("click", () => {
-      const report = state.reports.find((item) => item.id === button.dataset.id);
-      report.status = "승인";
-      saveState();
+    button.addEventListener("click", async () => {
+      const report = currentReports().find((item) => sameDbId(item.id, button.dataset.id));
+      if (!report) return;
+      await updateVisitReportStatus(report, "승인");
+      await refreshSupabaseData({ force: true });
       renderAll();
     });
   });
 
   $$(".copy-summary").forEach((button) => {
     button.addEventListener("click", async () => {
-      const report = state.reports.find((item) => item.id === button.dataset.id);
+      const report = currentReports().find((item) => sameDbId(item.id, button.dataset.id));
+      if (!report) return;
       const summary = makeBandSummary(report);
       await navigator.clipboard.writeText(summary);
       button.textContent = "복사 완료";
@@ -1567,22 +2502,23 @@ function renderReviewList() {
 }
 
 function renderInsights() {
-  const byStore = state.reports.reduce((acc, report) => {
+  const reports = currentReports();
+  const byStore = reports.reduce((acc, report) => {
     acc[report.storeId] = (acc[report.storeId] || 0) + 1;
     return acc;
   }, {});
   const repeated = Object.entries(byStore)
     .filter(([, count]) => count >= 2)
-    .map(([storeId, count]) => `${getStore(storeId).name}: 방문 ${count}회`);
+    .map(([storeId, count]) => `${getStore(storeId)?.name || "설치처 확인 필요"}: 방문 ${count}회`);
 
-  const repairStores = state.reports
+  const repairStores = reports
     .filter((report) => report.visitTypeId === "repair")
-    .map((report) => getStore(report.storeId).name);
+    .map((report) => getStore(report.storeId)?.name || "설치처 확인 필요");
 
   const items = [
     repeated.length ? `반복 방문 설치처: ${repeated.join(", ")}` : "반복 방문 설치처는 아직 없습니다.",
     repairStores.length ? `최근 장애 처리 설치처: ${[...new Set(repairStores)].join(", ")}` : "장애 처리 누적이 없습니다.",
-    state.reports.some((report) => report.customerConfirm !== "확인 완료")
+    reports.some((report) => report.customerConfirm !== "확인 완료")
       ? "고객 확인이 누락된 보고가 있습니다."
       : "고객 확인 누락은 없습니다.",
   ];
@@ -1661,17 +2597,6 @@ function formatCoordinate(value) {
 async function currentLocationLabel(position) {
   const lat = formatCoordinate(position.lat);
   const lng = formatCoordinate(position.lng);
-  try {
-    const response = await fetch(`/api/reverse-geocode?lat=${encodeURIComponent(position.lat)}&lng=${encodeURIComponent(position.lng)}`, {
-      cache: "no-store",
-    });
-    if (response.ok) {
-      const payload = await response.json();
-      if (payload.address) return payload.address;
-    }
-  } catch {
-    // Simple static server does not provide reverse geocoding.
-  }
   return `${lat}, ${lng}`;
 }
 
@@ -1729,9 +2654,9 @@ function bindEvents() {
   $("#loginDepartment").addEventListener("input", renderLoginMembers);
   $("#monthlyIncompleteOnly")?.addEventListener("change", renderMonthlyProgress);
 
-  $("#orderForm").addEventListener("submit", (event) => {
+  $("#orderForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    state.serviceOrders.unshift({
+    const order = {
       id: `order-${Date.now()}`,
       storeId: $("#orderStoreSelect").value,
       type: $("#orderType").value,
@@ -1743,8 +2668,9 @@ function bindEvents() {
       source: ["inspection", "filter-replace"].includes($("#orderType").value) ? "periodic" : "office",
       createdAt: new Date().toISOString(),
       createdBy: currentSession?.name || "사무실",
-    });
-    saveState();
+    };
+    await createServiceOrder(order);
+    await refreshSupabaseData({ force: true });
     event.target.reset();
     renderAll();
   });
@@ -1780,7 +2706,7 @@ function bindEvents() {
     renderAll();
   });
 
-  $("#loginForm").addEventListener("submit", (event) => {
+  $("#loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     selectedStoreId = null;
     isReportComposerOpen = false;
@@ -1790,12 +2716,17 @@ function bindEvents() {
       department: currentDepartment,
       signedInAt: new Date().toISOString(),
     });
+    await refreshSupabaseData({ force: true });
     renderAuthState();
   });
 
   $("#logoutButton").addEventListener("click", () => {
     sessionStorage.removeItem(SESSION_KEY);
     currentSession = null;
+    supabaseState.loaded = false;
+    supabaseState.monthlyItems = null;
+    supabaseState.reports = null;
+    supabaseState.serviceOrders = null;
     selectedStoreId = null;
     isReportComposerOpen = false;
     $("#loginForm").reset();
@@ -1805,7 +2736,7 @@ function bindEvents() {
     $("#loginScreen").hidden = false;
   });
 
-  $("#reportForm").addEventListener("submit", (event) => {
+  $("#reportForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const store = getStore(selectedStoreId);
     if (!store) {
@@ -1838,26 +2769,25 @@ function bindEvents() {
       followUpText: shouldCreateFollowUp ? $("#followUpText").value.trim() : "",
     };
 
-    state.reports.unshift(report);
-    const linkedOrder = state.serviceOrders.find((order) => order.id === activeOrderId);
+    const savedReport = await createVisitReport(report);
+    const linkedOrder = currentServiceOrders().find((order) => sameDbId(order.id, activeOrderId));
     if (linkedOrder) {
-      linkedOrder.status = "done";
-      linkedOrder.completedAt = new Date().toISOString();
-      linkedOrder.completedReportId = report.id;
+      await updateServiceOrderStatus(linkedOrder, "done", savedReport.id);
     }
     if (shouldCreateFollowUp) {
       state.followUps.unshift({
         id: `follow-up-${Date.now()}`,
         storeId: store.id,
-        reportId: report.id,
+        reportId: savedReport.id,
         text: $("#followUpText").value.trim(),
         priority: $("#followUpPriority").value,
         status: "open",
         createdAt: new Date().toISOString(),
         createdBy: currentSession?.name || "현장 엔지니어",
       });
+      saveState();
     }
-    saveState();
+    await refreshSupabaseData({ force: true });
     isReportComposerOpen = false;
     activeOrderId = null;
     event.target.reset();
@@ -1869,6 +2799,10 @@ function bindEvents() {
   $("#resetDemo").addEventListener("click", () => {
     localStorage.removeItem(STORAGE_KEY);
     state = loadState();
+    supabaseState.loaded = false;
+    supabaseState.monthlyItems = null;
+    supabaseState.reports = null;
+    supabaseState.serviceOrders = null;
     selectedStoreId = state.stores[0]?.id || null;
     isReportComposerOpen = false;
     setDefaultTimes();
@@ -1894,7 +2828,7 @@ function bindEvents() {
       "고객확인",
       "상태",
     ];
-    const rows = state.reports.map((report) => {
+    const rows = currentReports().map((report) => {
       const store = getStore(report.storeId);
       const type = getVisitType(report.visitTypeId);
       return [
@@ -1998,11 +2932,12 @@ function bindEvents() {
     renderAll();
   });
 
-  $("#roleSelect").addEventListener("change", () => {
+  $("#roleSelect").addEventListener("change", async () => {
     currentDepartment = normalizeDepartmentId($("#roleSelect").value);
     localStorage.setItem(DEPARTMENT_KEY, currentDepartment);
     if (currentSession) {
       saveSession({ ...currentSession, department: currentDepartment });
+      await refreshSupabaseData({ force: true });
     }
     renderAll();
     if (hasCurrentWorkspace(currentDepartment)) requestLocation();
@@ -2041,6 +2976,8 @@ function bindEvents() {
 async function initializeApp() {
   await hydrateExternalCustomers();
   await hydrateGeocodeResults();
+  await initializeSupabaseClient();
+  if (currentSession) await refreshSupabaseData({ force: true });
   renderNavigation();
   bindMonthlyProgressTabs();
   bindEvents();
