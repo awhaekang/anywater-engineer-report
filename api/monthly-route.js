@@ -25,26 +25,36 @@ module.exports = async function handler(req, res) {
   };
 
   try {
-    // Step 1: products 조회 (방문_월1 또는 방문_월2 가 해당 월인 것)
-    const productsParams = new URLSearchParams({
-      select: "*",
-      or: `방문_월1.eq.${month},방문_월2.eq.${month}`,
+    // Step 1: products 조회 - 방문_월1=month OR 방문_월2=month
+    // or 필터 대신 두 쿼리를 병렬 실행 후 합산 (PostgREST or 인코딩 문제 우회)
+    const buildProductsUrl = (monthCol) => {
+      const params = new URLSearchParams({ select: "*" });
+      params.set(monthCol, `eq.${month}`);
+      if (engineer) params.set("정기_담당_엔지니어", `eq.${engineer}`);
+      return `${supabaseUrl}/rest/v1/products?${params}`;
+    };
+
+    const [res1, res2] = await Promise.all([
+      fetch(buildProductsUrl("방문_월1"), { headers }),
+      fetch(buildProductsUrl("방문_월2"), { headers }),
+    ]);
+
+    if (!res1.ok) {
+      const body = await res1.text();
+      return res.status(500).json({ error: `products 조회 실패(월1): ${body.slice(0, 300)}` });
+    }
+    if (!res2.ok) {
+      const body = await res2.text();
+      return res.status(500).json({ error: `products 조회 실패(월2): ${body.slice(0, 300)}` });
+    }
+
+    const [rows1, rows2] = await Promise.all([res1.json(), res2.json()]);
+    const seen = new Set();
+    const productRows = [...rows1, ...rows2].filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
     });
-    if (engineer) {
-      productsParams.set("정기_담당_엔지니어", `eq.${engineer}`);
-    }
-
-    const productsRes = await fetch(
-      `${supabaseUrl}/rest/v1/products?${productsParams}`,
-      { headers }
-    );
-
-    if (!productsRes.ok) {
-      const body = await productsRes.text();
-      return res.status(500).json({ error: `products 조회 실패: ${body.slice(0, 300)}` });
-    }
-
-    const productRows = await productsRes.json();
 
     // Step 2: 고유 customer_id 추출
     const customerIds = [...new Set(
