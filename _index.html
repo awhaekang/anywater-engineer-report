@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>현장 방문 보고</title>
+    <script src="https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=TMAP_APP_KEY_PLACEHOLDER"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -278,7 +280,7 @@
                 <div class="panel-head monthly-list-head">
                   <div>
                     <h2>이번달 전체 계정 리스트</h2>
-                    <p id="monthlyListSubtitle">담당자, 주소 권역, 설치처명 순으로 정렬합니다</p>
+                    <p id="monthlyListSubtitle">설치처명 순으로 정렬합니다</p>
                   </div>
                   <label class="inline-check monthly-filter">
                     <input id="monthlyIncompleteOnly" type="checkbox" />

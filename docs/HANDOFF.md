@@ -22,7 +22,7 @@ http://127.0.0.1:4174/index.html
 python3 scripts/local-server.py
 ```
 
-`scripts/local-server.py`는 정적 파일을 제공하면서 현재 위치 좌표를 주소로 바꾸는 로컬 전용 API(`/api/reverse-geocode`)도 제공합니다. API 키는 `.env.local`에서 서버 쪽으로만 읽습니다.
+`scripts/local-server.py`는 정적 파일을 제공하면서 `/` 또는 `/index.html` 요청 시 Tmap SDK placeholder를 `.env.local`의 `TMAP_APP_KEY`로 치환합니다. API 키는 로컬 서버가 HTML을 응답할 때만 주입합니다.
 
 ## 핵심 파일
 

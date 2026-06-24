@@ -28,12 +28,12 @@
 ## 로컬 확인
 
 ```bash
-python3 -m http.server 4174 --bind 127.0.0.1
+python3 scripts/local-server.py
 ```
 
 브라우저에서 `http://127.0.0.1:4174/index.html`을 엽니다.
 
-현재 버전은 브라우저 저장소를 사용합니다. Supabase 연결 전까지는 같은 브라우저 안에서만 데이터가 유지됩니다.
+현재 버전은 브라우저 저장소를 사용합니다. Supabase 연결 전까지는 같은 브라우저 안에서만 데이터가 유지됩니다. Tmap 지도는 `.env.local`의 `TMAP_APP_KEY`를 로컬 서버가 읽어 연결합니다.
 
 실제 고객 데이터가 `data/customers.local.json`에 있으므로 로컬 서버는 반드시 `127.0.0.1`에만 바인딩하세요.
 

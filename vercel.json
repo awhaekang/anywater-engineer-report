@@ -1,5 +1,9 @@
 {
   "cleanUrls": true,
+  "rewrites": [
+    { "source": "/", "destination": "/api/index" },
+    { "source": "/index.html", "destination": "/api/index" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
