@@ -2974,15 +2974,15 @@ function bindEvents() {
 }
 
 async function initializeApp() {
-  await hydrateExternalCustomers();
-  await hydrateGeocodeResults();
-  await initializeSupabaseClient();
-  if (currentSession) await refreshSupabaseData({ force: true });
+  // 로그인 화면을 먼저 즉시 표시하고 나머지는 백그라운드에서 로드
   renderNavigation();
   bindMonthlyProgressTabs();
   bindEvents();
   setDefaultTimes();
   renderAuthState();
+
+  await Promise.all([hydrateExternalCustomers(), hydrateGeocodeResults(), initializeSupabaseClient()]);
+  if (currentSession) await refreshSupabaseData({ force: true });
 }
 
 initializeApp();
