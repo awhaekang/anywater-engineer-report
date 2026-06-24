@@ -1672,23 +1672,63 @@ function renderLoginMembers() {
   }
 }
 
+// URL 라우팅
+const VIEW_ROUTES = { field: "/field", monthly: "/monthly", admin: "/admin", settings: "/settings" };
+const MONTHLY_TAB_ROUTES = { summary: "/monthly", list: "/monthly/list", map: "/monthly/map" };
+
+function navigateTo(view, monthlyTab) {
+  let path;
+  if (view === "monthly" && monthlyTab && monthlyTab !== "summary") {
+    path = `/monthly/${monthlyTab}`;
+  } else {
+    path = VIEW_ROUTES[view] || `/${view}`;
+  }
+  if (location.pathname !== path) history.pushState({ view, monthlyTab }, "", path);
+}
+
+function applyRoute(view, monthlyTab) {
+  $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  $$(".view").forEach((v) => v.classList.toggle("active", v.id === view));
+  if (view === "monthly" && monthlyTab) {
+    $$(".monthly-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.monthlyView === monthlyTab));
+    $$(".monthly-progress-view").forEach((panel) => panel.classList.toggle("active", panel.dataset.monthlyPanel === monthlyTab));
+    if (monthlyTab === "map") renderMonthlyProgress();
+  }
+  renderAll();
+}
+
+function routeFromPath(pathname) {
+  const parts = pathname.replace(/^\//, "").split("/");
+  const view = parts[0] || "field";
+  const sub = parts[1] || null;
+  const monthlyTab = view === "monthly" ? (sub || "summary") : null;
+  return { view: VIEW_ROUTES[view] ? view : "field", monthlyTab };
+}
+
 function renderNavigation() {
   $$(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.hidden) return;
-      $$(".nav-item").forEach((item) => item.classList.remove("active"));
-      $$(".view").forEach((view) => view.classList.remove("active"));
-      button.classList.add("active");
-      $(`#${button.dataset.view}`).classList.add("active");
-      renderAll();
+      const view = button.dataset.view;
+      navigateTo(view, view === "monthly" ? currentMonthlyTab() : null);
+      applyRoute(view, view === "monthly" ? currentMonthlyTab() : null);
     });
   });
+  window.addEventListener("popstate", (e) => {
+    const { view, monthlyTab } = e.state || routeFromPath(location.pathname);
+    applyRoute(view, monthlyTab);
+  });
+}
+
+function currentMonthlyTab() {
+  return $$(".monthly-tab").find((t) => t.classList.contains("active"))?.dataset.monthlyView || "summary";
 }
 
 function bindMonthlyProgressTabs() {
   $$(".monthly-tab").forEach((button) => {
     button.addEventListener("click", () => {
       const target = button.dataset.monthlyView;
+      navigateTo("monthly", target);
       $$(".monthly-tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.monthlyView === target);
       });
@@ -1763,8 +1803,10 @@ function renderAuthState() {
 
   currentDepartment = currentSession.department;
   localStorage.setItem(DEPARTMENT_KEY, currentDepartment);
-  showFieldView();
-  renderAll();
+  const { view, monthlyTab } = routeFromPath(location.pathname);
+  const targetView = $$(".nav-item").find((b) => b.dataset.view === view && !b.hidden) ? view : "field";
+  history.replaceState({ view: targetView, monthlyTab }, "", targetView === "field" ? "/field" : location.pathname);
+  applyRoute(targetView, monthlyTab);
   if (hasCurrentWorkspace(currentDepartment)) requestLocation();
 }
 
