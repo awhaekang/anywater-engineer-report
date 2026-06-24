@@ -1346,6 +1346,8 @@ function clearTmapMarkers() {
     if (typeof marker.setMap === "function") marker.setMap(null);
   });
   tmapState.markers = [];
+  tmapState._markerCache = new Map();
+  tmapState._markerItems = [];
 }
 
 function closeTmapInfoWindow() {
@@ -1445,19 +1447,55 @@ function setTmapMarkerVisibility(visible) {
   if (!visible) closeTmapInfoWindow();
 }
 
-function addTmapZoomControlledMarkers(markerItems, status, summaryText) {
-  tmapState.markers = markerItems.map(createTmapStoreMarker);
-  const updateVisibility = () => {
-    const zoom = currentTmapZoom();
-    const visible = zoom >= TMAP_MARKER_MIN_ZOOM;
-    setTmapMarkerVisibility(visible);
-    status.textContent = visible
-      ? `${summaryText} 줌 ${zoom}에서 마커를 표시 중입니다.`
-      : `${summaryText} 줌 ${TMAP_MARKER_MIN_ZOOM} 이상으로 확대하면 마커가 표시됩니다.`;
+function addTmapViewportMarkers(markerItems, status, summaryText) {
+  // 마커 객체 미리 생성하지 않고 item 데이터만 보관
+  tmapState._markerItems = markerItems;
+  tmapState._markerCache = new Map(); // lat_lng → marker 재사용
+  tmapState.markers = [];
+
+  const update = () => {
+    const map = tmapState.map;
+    if (!map) return;
+    const bounds = typeof map.getBounds === "function" ? map.getBounds() : null;
+
+    // 뷰포트 안의 아이템 필터링
+    let visible = markerItems;
+    if (bounds) {
+      const sw = bounds.getSouthWest?.() || bounds._sw;
+      const ne = bounds.getNorthEast?.() || bounds._ne;
+      if (sw && ne) {
+        const latMin = Math.min(sw.lat(), ne.lat()) - 0.01;
+        const latMax = Math.max(sw.lat(), ne.lat()) + 0.01;
+        const lngMin = Math.min(sw.lng(), ne.lng()) - 0.01;
+        const lngMax = Math.max(sw.lng(), ne.lng()) + 0.01;
+        visible = markerItems.filter((item) => {
+          const s = item.store || item;
+          return s.lat >= latMin && s.lat <= latMax && s.lng >= lngMin && s.lng <= lngMax;
+        });
+      }
+    }
+
+    // 현재 마커를 지도에서 모두 제거
+    tmapState.markers.forEach((m) => { if (typeof m.setMap === "function") m.setMap(null); });
+
+    // 뷰포트 안 마커만 생성/재사용해서 지도에 추가
+    tmapState.markers = visible.map((item) => {
+      const s = item.store || item;
+      const key = `${s.lat}_${s.lng}`;
+      let marker = tmapState._markerCache.get(key);
+      if (!marker) {
+        marker = createTmapStoreMarker(item);
+        tmapState._markerCache.set(key, marker);
+      }
+      if (typeof marker.setMap === "function") marker.setMap(map);
+      return marker;
+    });
+
+    status.textContent = `${summaryText} 현재 화면 ${visible.length}건 표시 중.`;
   };
 
-  updateVisibility();
-  ["zoom_changed", "zoomend"].forEach((eventName) => addTmapListener(tmapState.map, eventName, updateVisibility));
+  update();
+  ["zoom_changed", "zoomend", "dragend"].forEach((ev) => addTmapListener(tmapState.map, ev, update));
 }
 
 async function initializeMonthlyMap(items, monthInfo) {
@@ -1489,8 +1527,7 @@ async function initializeMonthlyMap(items, monthInfo) {
       addTmapClusteredMarkers(markerItems);
       status.textContent = `${summaryText} 클러스터링으로 표시 중입니다.`;
     } else {
-      console.warn("Tmap MarkerClusterer가 없어 줌 레벨 기반 마커 표시로 대체합니다.");
-      addTmapZoomControlledMarkers(markerItems, status, summaryText);
+      addTmapViewportMarkers(markerItems, status, summaryText);
     }
   } catch (error) {
     console.error("Tmap 초기화 에러:", error);
