@@ -1450,7 +1450,11 @@ function addTmapViewportMarkers(markerItems, status, summaryText) {
   tmapState._markerCache = new Map(); // lat_lng → marker 재사용
   tmapState.markers = [];
 
+  // 이전 리스너가 누적되는 걸 막기 위한 generation 토큰
+  const myToken = ++tmapState.renderToken;
+
   const update = () => {
+    if (tmapState.renderToken !== myToken) return; // 구식 리스너 무효화
     const map = tmapState.map;
     if (!map) return;
     const bounds = typeof map.getBounds === "function" ? map.getBounds() : null;
