@@ -1528,15 +1528,14 @@ async function initializeMonthlyMap(items, monthInfo) {
 
     clearTmapMarkers();
     closeTmapInfoWindow();
-    // 기존 map 재사용 — 매번 새 Map 인스턴스를 만들면 이전 Map이 파괴되지 않아 마커 중복 발생
-    if (!tmapState.map || !container.isConnected) {
-      tmapState.map = new window.Tmapv2.Map(container, {
-        center: new window.Tmapv2.LatLng(TMAP_DEFAULT_CENTER.lat, TMAP_DEFAULT_CENTER.lng),
-        width: "100%",
-        height: "100%",
-        zoom: TMAP_DEFAULT_ZOOM,
-      });
-    }
+    // 기존 map destroy 후 항상 새로 생성 — DOM이 매번 교체되므로 재사용 불가
+    if (tmapState.map && typeof tmapState.map.destroy === "function") tmapState.map.destroy();
+    tmapState.map = new window.Tmapv2.Map(container, {
+      center: new window.Tmapv2.LatLng(TMAP_DEFAULT_CENTER.lat, TMAP_DEFAULT_CENTER.lng),
+      width: "100%",
+      height: "100%",
+      zoom: TMAP_DEFAULT_ZOOM,
+    });
 
     const summaryText = markerItems.length
       ? `${monthInfo.label} 대상 ${items.length.toLocaleString()}건 중 좌표 있는 고객 ${markerItems.length.toLocaleString()}건.`
