@@ -1347,6 +1347,17 @@ function clearTmapMarkers() {
   tmapState._markerItems = [];
 }
 
+function destroyTmapMap() {
+  clearTmapMarkers();
+  closeTmapInfoWindow();
+  if (tmapState.map) {
+    if (typeof tmapState.map.destroy === "function") tmapState.map.destroy();
+    tmapState.map = null;
+  }
+  // 기존 리스너 무효화
+  tmapState.renderToken++;
+}
+
 function closeTmapInfoWindow() {
   if (!tmapState.infoWindow) return;
   if (typeof tmapState.infoWindow.setMap === "function") {
@@ -1759,8 +1770,8 @@ function renderNavigation() {
     button.addEventListener("click", () => {
       if (button.hidden) return;
       const view = button.dataset.view;
-      // 지도가 아닌 뷰로 이동 시 마커 제거
-      if (view !== "monthly") clearTmapMarkers();
+      // 지도가 아닌 뷰로 이동 시 map 완전 파괴 (DOM 재생성 대비)
+      if (view !== "monthly") destroyTmapMap();
       navigateTo(view, view === "monthly" ? currentMonthlyTab() : null);
       applyRoute(view, view === "monthly" ? currentMonthlyTab() : null);
     });
@@ -1779,8 +1790,8 @@ function bindMonthlyProgressTabs() {
   $$(".monthly-tab").forEach((button) => {
     button.addEventListener("click", () => {
       const target = button.dataset.monthlyView;
-      // 지도 탭을 떠날 때 마커 제거
-      if (target !== "map") clearTmapMarkers();
+      // 지도 탭을 떠날 때 map 완전 파괴 (DOM 재생성 대비)
+      if (target !== "map") destroyTmapMap();
       navigateTo("monthly", target);
       $$(".monthly-tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.monthlyView === target);
