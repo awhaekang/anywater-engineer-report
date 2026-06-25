@@ -21,25 +21,32 @@
         </div>
         <div>
           <p class="eyebrow">Team Login</p>
-          <h1>부서와 이름으로 로그인</h1>
-          <p class="login-copy">부서를 먼저 선택하면 해당 부서 직원 이름만 표시됩니다.</p>
+          <h1>역할을 선택하세요</h1>
+        </div>
+        <div class="role-select-buttons">
+          <button class="role-btn active" type="button" data-role="tech">현장 엔지니어</button>
+          <button class="role-btn" type="button" data-role="cs">CS 상담원</button>
+          <button class="role-btn" type="button" data-role="admin">관리자</button>
         </div>
         <form id="loginForm" class="login-form">
-          <label>
-            부서
-            <select id="loginDepartment" required>
-              <option value="tech">기술부</option>
-              <option value="cs">CS팀</option>
-              <option value="management">경영지원부</option>
-              <option value="rnd">연구개발팀</option>
-              <option value="customer">고객관리팀</option>
-            </select>
-          </label>
-          <label>
-            이름
-            <select id="loginName" required></select>
-          </label>
+          <input type="hidden" id="loginDepartment" value="tech" />
+
+          <div id="loginNameRow">
+            <label>
+              이름
+              <select id="loginName" required></select>
+            </label>
+          </div>
+
+          <div id="loginPasswordRow" hidden>
+            <label>
+              비밀번호
+              <input id="loginPassword" type="password" placeholder="관리자 비밀번호 입력" />
+            </label>
+          </div>
+
           <button class="primary-btn full" type="submit">로그인하고 업무 화면 열기</button>
+          <p id="loginError" class="login-error" hidden>비밀번호가 올바르지 않습니다.</p>
         </form>
       </div>
     </section>
@@ -55,23 +62,16 @@
         </div>
 
         <div class="role-switcher">
-          <label for="roleSelect">현재 부서</label>
-          <select id="roleSelect">
-            <option value="tech">기술부</option>
-            <option value="cs">CS팀</option>
-            <option value="management">경영지원부</option>
-            <option value="rnd">연구개발팀</option>
-            <option value="customer">고객관리팀</option>
-          </select>
           <small id="sessionUser" class="session-user">로그인 사용자</small>
           <button id="logoutButton" class="ghost-btn sidebar-logout" type="button">로그아웃</button>
         </div>
 
         <nav class="nav">
-          <button class="nav-item active" data-view="field" data-departments="tech customer">현장 보고</button>
+          <button class="nav-item active" data-view="field" data-departments="tech">현장 보고</button>
           <button class="nav-item" data-view="monthly" data-departments="tech">이번달 진행 상황</button>
-          <button class="nav-item" data-view="admin" data-departments="tech" data-users="양석원">관리자</button>
-          <button class="nav-item" data-view="settings" data-departments="tech customer">점검 양식</button>
+          <button class="nav-item" data-view="cs-order" data-departments="cs">AS 오더 생성</button>
+          <button class="nav-item" data-view="admin" data-departments="admin">관리자</button>
+          <button class="nav-item" data-view="settings" data-departments="tech">점검 양식</button>
         </nav>
       </aside>
 
@@ -291,7 +291,12 @@
                 <div id="monthlyListContent"></div>
               </article>
               <article class="monthly-progress-view" data-monthly-panel="map">
-                <h2>이번달 계정 지도</h2>
+                <div class="map-filter-bar">
+                  <button class="map-filter-btn active" data-filter="all">전체</button>
+                  <button class="map-filter-btn" data-filter="pending">미완료</button>
+                  <button class="map-filter-btn" data-filter="complete">완료</button>
+                  <button class="map-filter-btn" data-filter="hold">보류</button>
+                </div>
                 <div id="monthlyMapContent" class="monthly-placeholder map-placeholder">지도 표시 영역</div>
               </article>
             </div>
@@ -603,6 +608,71 @@
               <button class="primary-btn" type="submit">설치처 추가</button>
             </form>
             <div id="adminStoreList" class="admin-store-list"></div>
+          </section>
+        </section>
+
+        <!-- CS 상담원 AS 오더 생성 화면 -->
+        <section id="cs-order" class="view">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">CS Team</p>
+              <h1>AS 오더 생성</h1>
+            </div>
+          </header>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>고객 검색</h2>
+                <p>관리번호, 상호명, 전화번호로 검색합니다</p>
+              </div>
+            </div>
+            <div class="cs-search-row">
+              <input id="csCustomerSearch" class="search" type="search" placeholder="예: 라페스타, 61000C-001, 031-000-0000" />
+              <button id="csSearchBtn" class="primary-btn" type="button">검색</button>
+            </div>
+            <div id="csSearchResults" class="store-list"></div>
+          </section>
+
+          <section class="panel" id="csOrderFormPanel" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>AS 오더 작성</h2>
+                <p id="csSelectedCustomerName">고객을 선택하세요</p>
+              </div>
+              <button id="csClearSelection" class="ghost-btn" type="button">다시 선택</button>
+            </div>
+            <form id="csOrderForm" class="store-form">
+              <input type="hidden" id="csCustomerId" />
+              <label>
+                AS 내용
+                <textarea id="csOrderRequest" rows="3" required placeholder="고객 요청 내용, 증상 등을 입력"></textarea>
+              </label>
+              <label>
+                담당 엔지니어
+                <select id="csOrderEngineer" required>
+                  <option value="">엔지니어 선택</option>
+                  <option value="이승혁">이승혁</option>
+                  <option value="신규철">신규철</option>
+                  <option value="양석원">양석원</option>
+                </select>
+              </label>
+              <label>
+                우선순위
+                <select id="csOrderPriority">
+                  <option value="보통">보통</option>
+                  <option value="높음">높음</option>
+                  <option value="긴급">긴급</option>
+                </select>
+              </label>
+              <label>
+                방문 희망일
+                <input id="csOrderVisitDate" type="date" required />
+              </label>
+              <button class="primary-btn full" type="submit">AS 오더 제출</button>
+              <p id="csOrderSuccess" class="login-error" style="color:var(--green);background:var(--green-light)" hidden>오더가 성공적으로 제출됐습니다.</p>
+              <p id="csOrderError" class="login-error" hidden>오더 제출에 실패했습니다. 다시 시도해 주세요.</p>
+            </form>
           </section>
         </section>
 

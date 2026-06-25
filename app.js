@@ -6,36 +6,30 @@ const SESSION_KEY = "visit-report-session-v1";
 const departments = {
   tech: {
     label: "기술부",
-    members: ["양석원", "신규철", "이승혁"],
+    members: ["이승혁", "신규철", "양석원"],
     currentWorkspace: true,
+    role: "engineer",
   },
   cs: {
-    label: "CS팀",
-    members: ["주미경", "정선영"],
+    label: "CS 상담원",
+    members: ["주미경", "정선영", "차성광", "이경희"],
     currentWorkspace: false,
+    role: "cs",
   },
-  management: {
-    label: "경영지원부",
-    members: ["김기훈", "차성광", "이경희"],
+  admin: {
+    label: "관리자",
+    members: ["해강"],
     currentWorkspace: false,
-  },
-  rnd: {
-    label: "연구개발팀",
-    members: ["김해강"],
-    currentWorkspace: false,
-  },
-  customer: {
-    label: "고객관리팀",
-    members: ["김동호", "이상진", "유재호"],
-    currentWorkspace: true,
+    role: "admin",
+    password: "anywater2024",
   },
 };
 
 const legacyRoleDepartments = {
   engineer: "tech",
-  office: "customer",
-  manager: "customer",
-  executive: "customer",
+  office: "cs",
+  manager: "admin",
+  executive: "admin",
 };
 
 const customerStatusLabels = {
@@ -261,6 +255,8 @@ let tmapState = {
   infoWindow: null,
   renderToken: 0,
 };
+let mapFilter = "all"; // all | pending | complete | hold
+let csSelectedCustomer = null;
 let supabaseClient = null;
 let supabaseState = {
   enabled: false,
@@ -1301,7 +1297,8 @@ function mapMarkerItemsFromMonthlyItems(items) {
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    });
+    })
+    .filter((item) => mapFilter === "all" || monthlyMarkerStatus(item) === mapFilter);
 }
 
 function monthlyMarkerStatus(item) {
@@ -1697,16 +1694,21 @@ function setDefaultTimes() {
 }
 
 function renderLoginMembers() {
-  const departmentSelect = $("#loginDepartment");
+  const department = $("#loginDepartment")?.value || "tech";
   const nameSelect = $("#loginName");
-  if (!departmentSelect || !nameSelect) return;
-  const previousName = nameSelect.value;
-  const department = normalizeDepartmentId(departmentSelect.value);
-  const members = departmentMembers(department);
-  nameSelect.innerHTML = members.map((name) => `<option value="${name}">${name}</option>`).join("");
-  if (members.includes(previousName)) {
-    nameSelect.value = previousName;
+  const nameRow = $("#loginNameRow");
+  const passwordRow = $("#loginPasswordRow");
+  if (!nameSelect) return;
+
+  const isAdmin = department === "admin";
+  if (nameRow) nameRow.hidden = isAdmin;
+  if (passwordRow) passwordRow.hidden = !isAdmin;
+
+  if (!isAdmin) {
+    const members = departmentMembers(department);
+    nameSelect.innerHTML = members.map((n) => `<option value="${n}">${n}</option>`).join("");
   }
+  if ($("#loginError")) $("#loginError").hidden = true;
 }
 
 // URL 라우팅
@@ -1775,6 +1777,18 @@ function bindMonthlyProgressTabs() {
       if (target === "map") renderMonthlyProgress();
     });
   });
+
+  $$(".map-filter-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      mapFilter = btn.dataset.filter;
+      $$(".map-filter-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      // 지도 재렌더링
+      tmapState.renderToken++;
+      const items = supabaseState.monthlyItems || [];
+      const monthInfo = currentMonthInfo();
+      initializeMonthlyMap(items, monthInfo);
+    });
+  });
 }
 
 function isDepartmentAllowed(button) {
@@ -1786,7 +1800,6 @@ function isDepartmentAllowed(button) {
 }
 
 function renderDepartmentAccess() {
-  $("#roleSelect").value = currentDepartment;
   $("#sessionUser").textContent = currentSession
     ? `${currentSession.name} · ${departmentLabel(currentDepartment)}`
     : departmentLabel(currentDepartment);
@@ -2643,6 +2656,46 @@ function renderAdminStores() {
     .join("");
 }
 
+async function runCsCustomerSearch() {
+  const query = $("#csCustomerSearch")?.value.trim();
+  if (!query) return;
+  const resultsEl = $("#csSearchResults");
+  resultsEl.innerHTML = `<div class="empty">검색 중...</div>`;
+  try {
+    const res = await fetch(`/api/customer-search?q=${encodeURIComponent(query)}`, { cache: "no-store" });
+    const data = await res.json();
+    const customers = data.customers || [];
+    if (!customers.length) {
+      resultsEl.innerHTML = `<div class="empty">검색 결과가 없습니다.</div>`;
+      return;
+    }
+    resultsEl.innerHTML = customers.map((c) => `
+      <article class="store-card" data-id="${escapeHtml(c.id)}">
+        <div class="store-card-main">
+          <strong>${escapeHtml(c.상호 || c.name || "")}</strong>
+          <span class="muted">${escapeHtml(c.관리번호 || "")}</span>
+        </div>
+        <p class="store-card-addr">${escapeHtml(c.주소 || c.address || "")}</p>
+        <p class="muted small">${escapeHtml(c.연락처_유선 || c.phone || "")} ${escapeHtml(c.휴대폰_주 || c.mobile || "")}</p>
+      </article>
+    `).join("");
+    resultsEl.querySelectorAll(".store-card").forEach((card) => {
+      card.style.cursor = "pointer";
+      card.addEventListener("click", () => {
+        const cust = customers.find((c) => c.id === card.dataset.id);
+        if (!cust) return;
+        csSelectedCustomer = cust;
+        $("#csSelectedCustomerName").textContent = `${cust.상호 || cust.name || ""} (${cust.관리번호 || ""})`;
+        $("#csCustomerId").value = cust.id;
+        $("#csOrderFormPanel").hidden = false;
+        $("#csOrderRequest").focus();
+      });
+    });
+  } catch {
+    resultsEl.innerHTML = `<div class="empty">검색 중 오류가 발생했습니다.</div>`;
+  }
+}
+
 function renderAll() {
   renderDepartmentAccess();
   renderMonthlyProgress();
@@ -2729,9 +2782,46 @@ function bindEvents() {
   $("#storeSearch").addEventListener("input", renderNearbyStores);
   $("#historySearch").addEventListener("input", renderHistoryList);
   $("#visitTypeSelect").addEventListener("change", renderReportForm);
-  $("#loginDepartment").addEventListener("change", renderLoginMembers);
-  $("#loginDepartment").addEventListener("input", renderLoginMembers);
   $("#monthlyIncompleteOnly")?.addEventListener("change", renderMonthlyProgress);
+
+  // CS 상담원 — 고객 검색
+  $("#csSearchBtn")?.addEventListener("click", runCsCustomerSearch);
+  $("#csCustomerSearch")?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runCsCustomerSearch(); } });
+  $("#csClearSelection")?.addEventListener("click", () => {
+    csSelectedCustomer = null;
+    $("#csOrderFormPanel").hidden = true;
+    $("#csSearchResults").innerHTML = "";
+    $("#csCustomerSearch").value = "";
+    $("#csCustomerSearch").focus();
+  });
+  $("#csOrderForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!csSelectedCustomer) return;
+    const order = {
+      id: `order-${Date.now()}`,
+      storeId: csSelectedCustomer.id,
+      type: "repair",
+      visitDate: $("#csOrderVisitDate").value,
+      assignedEngineer: $("#csOrderEngineer").value,
+      priority: $("#csOrderPriority").value,
+      request: $("#csOrderRequest").value.trim(),
+      status: "scheduled",
+      source: "office",
+      createdBy: currentSession?.name || "",
+    };
+    try {
+      await createServiceOrder(order);
+      $("#csOrderSuccess").hidden = false;
+      $("#csOrderError").hidden = true;
+      setTimeout(() => { $("#csOrderSuccess").hidden = true; }, 3000);
+      e.target.reset();
+      csSelectedCustomer = null;
+      $("#csOrderFormPanel").hidden = true;
+      $("#csSearchResults").innerHTML = "";
+    } catch {
+      $("#csOrderError").hidden = false;
+    }
+  });
 
   $("#orderForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2785,16 +2875,35 @@ function bindEvents() {
     renderAll();
   });
 
+  // 로그인 역할 선택 버튼
+  $$(".role-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $$(".role-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      $("#loginDepartment").value = btn.dataset.role;
+      renderLoginMembers();
+    });
+  });
+
   $("#loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const dept = normalizeDepartmentId($("#loginDepartment").value);
+    const isAdmin = dept === "admin";
+
+    if (isAdmin) {
+      const pw = $("#loginPassword")?.value || "";
+      if (pw !== departments.admin.password) {
+        $("#loginError").hidden = false;
+        return;
+      }
+    }
+    if ($("#loginError")) $("#loginError").hidden = true;
+
     selectedStoreId = null;
     isReportComposerOpen = false;
-    currentDepartment = normalizeDepartmentId($("#loginDepartment").value);
-    saveSession({
-      name: $("#loginName").value.trim(),
-      department: currentDepartment,
-      signedInAt: new Date().toISOString(),
-    });
+    currentDepartment = dept;
+    const name = isAdmin ? "해강" : $("#loginName").value.trim();
+    saveSession({ name, department: currentDepartment, signedInAt: new Date().toISOString() });
     await refreshSupabaseData({ force: true });
     renderAuthState();
   });
@@ -2809,7 +2918,8 @@ function bindEvents() {
     selectedStoreId = null;
     isReportComposerOpen = false;
     $("#loginForm").reset();
-    $("#loginDepartment").value = currentDepartment;
+    $("#loginDepartment").value = "tech";
+    $$(".role-btn").forEach((b) => b.classList.toggle("active", b.dataset.role === "tech"));
     renderLoginMembers();
     $("#appShell").hidden = true;
     $("#loginScreen").hidden = false;
@@ -3011,16 +3121,6 @@ function bindEvents() {
     renderAll();
   });
 
-  $("#roleSelect").addEventListener("change", async () => {
-    currentDepartment = normalizeDepartmentId($("#roleSelect").value);
-    localStorage.setItem(DEPARTMENT_KEY, currentDepartment);
-    if (currentSession) {
-      saveSession({ ...currentSession, department: currentDepartment });
-      await refreshSupabaseData({ force: true });
-    }
-    renderAll();
-    if (hasCurrentWorkspace(currentDepartment)) requestLocation();
-  });
 
   $("#addVisitType").addEventListener("click", () => {
     const template = $("#visitTypeDialog").content.cloneNode(true);
