@@ -1445,7 +1445,8 @@ function setTmapMarkerVisibility(visible) {
 }
 
 function addTmapViewportMarkers(markerItems, status, summaryText) {
-  // 마커 객체 미리 생성하지 않고 item 데이터만 보관
+  // 기존 마커를 지도에서 먼저 제거 (배열 초기화 전에 반드시 호출)
+  tmapState.markers.forEach((m) => { if (typeof m.setMap === "function") m.setMap(null); });
   tmapState._markerItems = markerItems;
   tmapState._markerCache = new Map(); // lat_lng → marker 재사용
   tmapState.markers = [];
