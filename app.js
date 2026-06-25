@@ -1458,18 +1458,20 @@ function addTmapViewportMarkers(markerItems, status, summaryText) {
     // 뷰포트 안의 아이템 필터링
     let visible = markerItems;
     if (bounds) {
-      const sw = bounds.getSouthWest?.() || bounds._sw;
-      const ne = bounds.getNorthEast?.() || bounds._ne;
-      if (sw && ne) {
-        const latMin = Math.min(sw.lat(), ne.lat()) - 0.01;
-        const latMax = Math.max(sw.lat(), ne.lat()) + 0.01;
-        const lngMin = Math.min(sw.lng(), ne.lng()) - 0.01;
-        const lngMax = Math.max(sw.lng(), ne.lng()) + 0.01;
-        visible = markerItems.filter((item) => {
-          const s = item.store || item;
-          return s.lat >= latMin && s.lat <= latMax && s.lng >= lngMin && s.lng <= lngMax;
-        });
-      }
+      try {
+        const sw = bounds.getSouthWest?.() || bounds._sw;
+        const ne = bounds.getNorthEast?.() || bounds._ne;
+        const latMin = Math.min(Number(sw?.lat?.()), Number(ne?.lat?.())) - 0.02;
+        const latMax = Math.max(Number(sw?.lat?.()), Number(ne?.lat?.())) + 0.02;
+        const lngMin = Math.min(Number(sw?.lng?.()), Number(ne?.lng?.())) - 0.04;
+        const lngMax = Math.max(Number(sw?.lng?.()), Number(ne?.lng?.())) + 0.04;
+        if (Number.isFinite(latMin) && Number.isFinite(latMax)) {
+          visible = markerItems.filter((item) => {
+            const s = item.store || item;
+            return s.lat >= latMin && s.lat <= latMax && s.lng >= lngMin && s.lng <= lngMax;
+          });
+        }
+      } catch { /* bounds 파싱 실패 시 전체 표시 */ }
     }
 
     // 현재 마커를 지도에서 모두 제거
