@@ -1751,6 +1751,8 @@ function renderNavigation() {
     button.addEventListener("click", () => {
       if (button.hidden) return;
       const view = button.dataset.view;
+      // 지도가 아닌 뷰로 이동 시 마커 제거
+      if (view !== "monthly") clearTmapMarkers();
       navigateTo(view, view === "monthly" ? currentMonthlyTab() : null);
       applyRoute(view, view === "monthly" ? currentMonthlyTab() : null);
     });
@@ -1769,6 +1771,8 @@ function bindMonthlyProgressTabs() {
   $$(".monthly-tab").forEach((button) => {
     button.addEventListener("click", () => {
       const target = button.dataset.monthlyView;
+      // 지도 탭을 떠날 때 마커 제거
+      if (target !== "map") clearTmapMarkers();
       navigateTo("monthly", target);
       $$(".monthly-tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.monthlyView === target);
